@@ -109,16 +109,21 @@ function Kettlebell({ motion, reduced }) {
   const labelTex = useMemo(() => createLabelTexture(), [])
   const mats = useMemo(
     () => ({
-      // single-layer polished chrome: a clear coat on top doubled every reflection into hard bars
-      chrome: new THREE.MeshStandardMaterial({ color: '#eceef4', metalness: 1, roughness: 0.13, envMapIntensity: 1.35 }),
-      grip: new THREE.MeshStandardMaterial({ color: '#e6e8ef', metalness: 1, roughness: 0.17, envMapIntensity: 1.3 }),
+      // glossy painted steel, one cast piece: orange is the competition colour for a 28 kg bell
+      paint: new THREE.MeshPhysicalMaterial({
+        color: '#ff4f1f',
+        metalness: 0.08,
+        roughness: 0.34,
+        clearcoat: 1,
+        clearcoatRoughness: 0.05,
+        envMapIntensity: 1.15,
+      }),
       foot: new THREE.MeshStandardMaterial({ color: '#191a26', metalness: 1, roughness: 0.34, envMapIntensity: 0.9 }),
-      band: new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false }),
       label: new THREE.MeshStandardMaterial({
         map: labelTex,
         transparent: true,
-        metalness: 0.6,
-        roughness: 0.42,
+        metalness: 0.1,
+        roughness: 0.38,
         depthWrite: false,
         polygonOffset: true,
         polygonOffsetFactor: -2,
@@ -177,7 +182,9 @@ function Kettlebell({ motion, reduced }) {
       sp.rotation.set(motion.tilt + exit * 0.9, motion.angle + exit * Math.PI * 1.4, 0)
     }
     if (rim.current) rim.current.intensity = 6 + energy * 150 + (1 - intro) * 60
-    mats.band.color.copy(heatLinear).multiplyScalar(4.5 + energy * 7)
+    // the paint glows hotter while it spins
+    mats.paint.emissive.copy(heatLinear)
+    mats.paint.emissiveIntensity = 0.05 + energy * 0.5
   })
 
   return (
@@ -185,10 +192,9 @@ function Kettlebell({ motion, reduced }) {
       <group ref={rig}>
         <group ref={spinner}>
           <group position-y={-KB_CENTER_Y}>
-            <mesh geometry={geo.body} material={mats.chrome} />
-            <mesh geometry={geo.handle} material={mats.grip} />
+            <mesh geometry={geo.body} material={mats.paint} />
+            <mesh geometry={geo.handle} material={mats.paint} />
             <mesh geometry={geo.foot} material={mats.foot} />
-            <mesh geometry={geo.band} material={mats.band} />
             <mesh geometry={geo.label} material={mats.label} renderOrder={2} />
           </group>
         </group>
@@ -219,7 +225,7 @@ const Studio = memo(function Studio() {
       <Lightformer form="rect" intensity={4} color={HEAT} position={[5, 1, -5]} rotation-y={-Math.PI / 4} scale={[1.2, 9, 1]} />
       <Lightformer form="circle" intensity={3} color={HEAT} position={[-4, 4.5, 3]} scale={0.9} />
       {/* deep cobalt floor so the lower half sits in the scene's colour */}
-      <Lightformer form="rect" intensity={1.8} color={COBALT} position={[0, -6, 0]} rotation-x={Math.PI / 2} scale={[20, 20, 1]} />
+      <Lightformer form="rect" intensity={1.1} color={COBALT} position={[0, -6, 0]} rotation-x={Math.PI / 2} scale={[20, 20, 1]} />
     </Environment>
   )
 })

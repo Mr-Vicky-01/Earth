@@ -839,6 +839,9 @@
     .pull-help-keys {
       display: none;
     }
+    .pull-again .btn {
+      height: 2.9rem; /* ≥ 44 px touch target */
+    }
   }
   .pull-again {
     visibility: hidden;

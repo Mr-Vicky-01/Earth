@@ -1,0 +1,560 @@
+@layer components {
+  /* ---------- header: headline left, split-flap clock right ---------- */
+  .brd-head {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1.6rem;
+    margin-bottom: clamp(2.75rem, 6vw, 6rem);
+  }
+  .brd-clockbox {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.85rem;
+    margin-top: 0.4rem;
+  }
+  .brd-clockmeta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.7rem;
+    font-size: 0.68rem;
+  }
+  .brd-sep {
+    width: 1.1rem;
+    height: 1px;
+    background: var(--line);
+  }
+  .brd-next {
+    min-width: 22ch;
+  }
+  @media (min-width: 1024px) {
+    .brd-clockbox {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      align-items: flex-end;
+      margin: 0;
+    }
+    /* meta line hangs below the tiles so the clock never rises into the first headline line */
+    .brd-clockmeta {
+      position: absolute;
+      top: calc(100% + 0.9rem);
+      right: 0;
+      flex-wrap: nowrap;
+      white-space: nowrap;
+    }
+  }
+
+  .brd-clock {
+    --cw: clamp(2.55rem, 4.3vw, 5rem);
+    --chh: calc(var(--cw) * 1.38);
+    display: flex;
+    align-items: center;
+    gap: calc(var(--cw) * 0.12);
+  }
+  .brd-pair {
+    display: flex;
+    gap: calc(var(--cw) * 0.06);
+  }
+  .brd-colon {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--cw) * 0.34);
+  }
+  .brd-colon i {
+    display: block;
+    width: calc(var(--cw) * 0.12);
+    height: calc(var(--cw) * 0.12);
+    background: var(--color-heat);
+    transform: skewX(var(--slant));
+    animation: brd-blink 1s steps(2, jump-none) infinite;
+  }
+
+  /* ---------- a single flap cell ---------- */
+  .brd-c {
+    --brd-t1: #20202c;
+    --brd-t2: #191923;
+    position: relative;
+    display: block;
+    flex: none;
+    width: var(--cw);
+    height: var(--chh);
+    contain: size layout style;
+    font-family: var(--font-display);
+    font-style: normal;
+    font-weight: 800;
+    font-stretch: 84%;
+    font-synthesis: none;
+    font-size: calc(var(--chh) * 0.66);
+    text-align: center;
+    color: var(--brd-gl, var(--color-paper));
+    user-select: none;
+    transition: color 0.25s;
+  }
+  .brd-c > span {
+    position: absolute;
+    left: 0;
+    right: 0;
+    padding-top: 0.06em;
+  }
+  /* idle: one glyph on a two-tone tile */
+  .brd-g {
+    top: 0;
+    height: 100%;
+    line-height: var(--chh);
+    background: linear-gradient(var(--brd-t1) 50%, var(--brd-t2) 50%);
+  }
+  /* flapping: three clipped halves on top of the glyph */
+  .brd-l,
+  .brd-fu,
+  .brd-fl {
+    display: none;
+    height: 50%;
+    overflow: hidden;
+  }
+  .brd-c.is-f > .brd-l,
+  .brd-c.is-f > .brd-fu,
+  .brd-c.is-f > .brd-fl {
+    display: block;
+  }
+  .brd-l,
+  .brd-fl {
+    top: 50%;
+    line-height: 0;
+  }
+  .brd-fu {
+    top: 0;
+    line-height: var(--chh);
+  }
+  .brd-l {
+    background: var(--brd-t2);
+  }
+  /* the moving leaves: the falling one catches light, the rising one comes out of shadow */
+  .brd-fu {
+    z-index: 1;
+    background: linear-gradient(#34344a, #262636);
+    transform-origin: 50% 100%;
+  }
+  .brd-fl {
+    z-index: 1;
+    background: linear-gradient(#0c0c12, #1d1d29);
+    transform-origin: 50% 0;
+  }
+  /* hairline split and hinge */
+  .brd-c::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(50% - 1px);
+    height: 1px;
+    z-index: 2;
+    background: #050508;
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.05);
+  }
+  .brd-c--k::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(50% - 3px);
+    height: 5px;
+    z-index: 3;
+    border-inline: 2px solid #050508;
+  }
+  .brd-c--k {
+    --brd-t1: #22222f;
+    --brd-t2: #1a1a25;
+    font-size: calc(var(--chh) * 0.74);
+    font-weight: 700;
+    font-stretch: 80%;
+  }
+
+  /* ---------- the board housing ---------- */
+  .brd-unit {
+    --brd-bg: #07070b;
+    container-type: inline-size;
+    position: relative;
+    background: var(--brd-bg);
+    border: 1px solid var(--line);
+  }
+  /* corner ticks, like an instrument panel */
+  .brd-unit::before,
+  .brd-unit::after {
+    content: "";
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .brd-unit::before {
+    left: -1px;
+    top: -1px;
+    border-left: 2px solid var(--color-paper);
+    border-top: 2px solid var(--color-paper);
+  }
+  .brd-unit::after {
+    right: -1px;
+    bottom: -1px;
+    border-right: 2px solid var(--color-paper);
+    border-bottom: 2px solid var(--color-paper);
+  }
+  .brd-bezel {
+    --padx: clamp(14px, 1.8cqi, 28px);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.45rem 1.5rem;
+    padding: 0.85rem var(--padx);
+    border-bottom: 1px solid var(--line);
+    font-size: 0.66rem;
+  }
+  .brd-bezel-l {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .brd-bezel-r {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem 1.4rem;
+  }
+  .brd-open {
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .brd-swipe {
+    display: none;
+  }
+
+  /* day rail: 05:30 → 21:30, a tick per class, heat playhead at the current minute */
+  .brd-rail {
+    --padx: clamp(14px, 1.8cqi, 28px);
+    position: relative;
+    height: 2.4rem;
+    margin-inline: var(--padx);
+  }
+  .brd-rail::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    background: var(--line);
+  }
+  .brd-rail-fill {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(50% - 1px);
+    height: 3px;
+    background: linear-gradient(90deg, rgb(239 238 233 / 0.08), rgb(239 238 233 / 0.55));
+    transform: scaleX(0);
+    transform-origin: 0 50%;
+  }
+  .brd-rail-tick {
+    position: absolute;
+    top: calc(50% - 5px);
+    width: 1px;
+    height: 10px;
+    background: var(--mute);
+    opacity: 0.6;
+  }
+  .brd-rail-tick.is-past {
+    background: var(--color-paper);
+    opacity: 1;
+  }
+  .brd-rail-head {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 0;
+    height: 0;
+  }
+  .brd-rail-head::before {
+    content: "";
+    position: absolute;
+    left: -2px;
+    top: -9px;
+    width: 4px;
+    height: 18px;
+    background: var(--color-heat);
+    transform: skewX(var(--slant));
+  }
+  .brd-rail-now {
+    position: absolute;
+    left: 0.7rem;
+    top: -0.45rem;
+    font-size: 0.6rem;
+    line-height: 0.9rem;
+    color: var(--color-heat);
+    white-space: nowrap;
+    padding: 0 0.3rem;
+    background: var(--brd-bg);
+  }
+  .brd-rail-head.is-end .brd-rail-now {
+    left: auto;
+    right: 0.7rem;
+  }
+
+  .brd-scrollbox {
+    position: relative;
+  }
+  .brd-scroll {
+    overflow: hidden;
+  }
+  .brd-scroll:focus-visible {
+    outline-offset: -2px;
+  }
+  .brd-table {
+    --gap: 2px;
+    --colg: clamp(10px, 1.25cqi, 20px);
+    --padx: clamp(14px, 1.8cqi, 28px);
+    --mk: 4.7rem;
+    --n: 46;
+    --ng: 41;
+    --ncg: 5;
+    --padr: var(--padx);
+    --cmin: 13px;
+    --cw: max(
+      var(--cmin),
+      min(30px, calc((100cqi - var(--padx) - var(--padr) - var(--mk) - var(--ncg) * var(--colg) - var(--ng) * var(--gap)) / var(--n)))
+    );
+    --chh: calc(var(--cw) * 1.42);
+    width: max-content;
+    min-width: 100%;
+    padding: calc(var(--padx) * 0.55) var(--padr) var(--padx) var(--padx);
+  }
+
+  .brd-row {
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    align-items: center;
+    gap: var(--colg);
+    margin-inline: calc(var(--padx) * -0.5);
+    padding: calc(var(--cw) * 0.22) calc(var(--padx) * 0.5);
+    transition:
+      transform 0.45s var(--ease-expo),
+      background-color 0.25s;
+  }
+  .brd-row + .brd-row {
+    box-shadow: inset 0 1px 0 rgb(239 238 233 / 0.045);
+  }
+  .brd-hrow {
+    padding-block: 0.5rem 0.65rem;
+  }
+  .brd-hd {
+    flex: none;
+    width: calc(var(--k) * var(--cw) + (var(--k) - 1) * var(--gap));
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--mute);
+    white-space: nowrap;
+  }
+  .brd-mk {
+    flex: none;
+    display: flex;
+    align-items: center;
+    width: var(--mk);
+  }
+  .brd-col {
+    flex: none;
+    display: block;
+  }
+  .brd-cells {
+    display: flex;
+    gap: var(--gap);
+  }
+  .brd-flash {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: var(--color-heat);
+    transform: scaleX(0);
+    transform-origin: 0 50%;
+    pointer-events: none;
+  }
+
+  /* row states */
+  .brd-row[data-st="past"] {
+    --brd-gl: #77778a;
+  }
+  .brd-row[data-st="past"] .brd-c {
+    --brd-t1: #191922;
+    --brd-t2: #14141c;
+  }
+  .brd-row.is-full .brd-col--spots,
+  .brd-row.is-hot .brd-col--spots {
+    --brd-gl: var(--color-heat);
+  }
+  .brd-row.is-hot {
+    --brd-gl: #fff;
+  }
+  .brd-row.is-hot .brd-tag {
+    color: var(--color-heat);
+  }
+  .brd-row.is-hot .brd-tag::before {
+    background: var(--color-ink);
+    border-color: var(--color-ink);
+  }
+
+  /* status tags at the row start */
+  .brd-tag {
+    position: relative;
+    isolation: isolate;
+    display: none;
+    align-items: center;
+    gap: 0.4rem;
+    height: 1.4rem;
+    padding: 0 0.55rem;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--color-ink);
+  }
+  .brd-tag::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: var(--color-heat);
+    transform: skewX(var(--slant));
+  }
+  .brd-tag--now {
+    color: var(--color-paper);
+    padding-left: 0.45rem;
+  }
+  .brd-tag--now::before {
+    background: transparent;
+    border: 1px solid rgb(239 238 233 / 0.35);
+  }
+  .brd-tag .live-dot {
+    border-radius: 0;
+    width: 0.4rem;
+    height: 0.4rem;
+  }
+  .brd-row[data-st="next"] .brd-tag--next,
+  .brd-row[data-st="now"] .brd-tag--now,
+  .brd-row[data-st="tomorrow"] .brd-tag--tmrw {
+    display: inline-flex;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .brd-row:not(.brd-hrow):hover {
+      background: var(--color-ink-2);
+      transform: translateX(8px);
+      --brd-gl: #fff;
+    }
+    .brd-row:not(.brd-hrow):hover .brd-c {
+      --brd-t1: #2a2a39;
+      --brd-t2: #20202c;
+    }
+    .brd-row.is-full:hover .brd-col--spots {
+      --brd-gl: var(--color-heat);
+    }
+  }
+
+  /* right-edge fade while there is more board off to the side */
+  .brd-fade {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 64px;
+    background: linear-gradient(90deg, transparent, var(--brd-bg) 85%);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .brd-unit[data-more] .brd-fade {
+    opacity: 1;
+  }
+
+  /* narrow board: drop TARGET, keep cells legible, scroll sideways inside the housing */
+  @container (max-width: 899px) {
+    .brd-table {
+      --n: 33;
+      --ng: 29;
+      --ncg: 4;
+      --mk: 4.1rem;
+      --gap: 2px;
+      --colg: 11px;
+      --cmin: 14px;
+      --padr: calc(var(--padx) + 16px);
+    }
+    .brd-col--target {
+      display: none;
+    }
+    .brd-scroll {
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-x: contain;
+      scrollbar-width: none;
+    }
+    .brd-scroll::-webkit-scrollbar {
+      display: none;
+    }
+    .brd-swipe {
+      display: inline;
+    }
+    .brd-tag {
+      font-size: 0.6rem;
+      padding: 0 0.38rem;
+      height: 1.3rem;
+      letter-spacing: 0.02em;
+    }
+  }
+
+  .brd-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem 2rem;
+    margin-top: 1.75rem;
+  }
+
+  @media (max-width: 759px) {
+    /* the board runs edge to edge on phones */
+    .brd-unit {
+      margin-inline: calc(-1 * clamp(16px, 4vw, 64px));
+      border-inline: 0;
+    }
+    .brd-unit::before {
+      left: 0;
+    }
+    .brd-unit::after {
+      right: 0;
+    }
+  }
+
+  @keyframes brd-blink {
+    50% {
+      opacity: 0.25;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .brd-colon i {
+      animation: none;
+    }
+    .brd-row,
+    .brd-c {
+      transition: none;
+    }
+  }
+}

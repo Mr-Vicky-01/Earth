@@ -213,9 +213,11 @@ export function Pull({ ready }) {
     engineRef.current?.setInView(inView)
   }, [inView])
 
+  // App may render Pull without `ready` (it sits far below the fold): treat that as ready
+  const isReady = ready !== false
   useEffect(() => {
-    if (ready) engineRef.current?.setReady()
-  }, [ready])
+    if (isReady) engineRef.current?.setReady()
+  }, [isReady])
 
   // "Pull again" is yanked in from the left once the sled stops
   useGSAP(
