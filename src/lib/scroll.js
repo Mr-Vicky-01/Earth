@@ -54,6 +54,8 @@ function tick(_time, deltaTime) {
 export function useSmoothScroll(enabled) {
   useEffect(() => {
     scroll.y = window.scrollY
+    // follow real time even when frames run long (heavy WebGL, slow devices): animations stay on schedule
+    gsap.ticker.lagSmoothing(0)
     gsap.ticker.add(tick)
     let lenisTick = null
     if (!reducedMotion()) {

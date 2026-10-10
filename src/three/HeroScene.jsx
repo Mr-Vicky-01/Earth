@@ -176,7 +176,7 @@ function Kettlebell({ motion, reduced }) {
     const sp = spinner.current
     if (g && sp) {
       const aspect = size.width / size.height
-      const s = portrait ? clamp(aspect * 1.3, 0.56, 0.9) : 0.84
+      const s = portrait ? clamp(aspect * 1.3, 0.56, 0.9) : 0.84 * clamp(aspect / 1.55, 0.86, 1)
       g.scale.setScalar(s)
       const bob = reduced ? 0 : Math.sin(t * 1.15) * 0.06
       // scroll exit: rises, tips away and shoots off down the tunnel

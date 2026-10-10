@@ -169,13 +169,13 @@
     grid-area: 1 / 1 / 2 / 2;
     justify-self: start;
     align-self: end;
-    width: min(31rem, 100%);
+    width: min(36rem, 100%);
     margin-left: calc(var(--hero-fs) * 2.42 + clamp(1.5rem, 3vw, 3.5rem));
     padding-bottom: calc(var(--hero-fs) * 0.035);
   }
   .hero-lead {
     margin: 0;
-    max-width: 34ch;
+    max-width: 44ch;
     color: var(--fg);
   }
   .hero-ctas {

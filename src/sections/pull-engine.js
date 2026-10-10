@@ -137,12 +137,14 @@ export function createPullEngine(el, hooks = {}) {
   }
 
   function tick(_t, dtMs) {
+    // physics dt is clamped (≤ 32 ms); pointer speed is measured against real elapsed time
     const dt = clamp(dtMs || 16.7, 1, 32) / 1000
+    const dtReal = clamp(dtMs || 16.7, 1, 120) / 1000
 
     if (st.dragging) {
-      const vRaw = (st.p - st.pPrev) / dt
+      const vRaw = (st.p - st.pPrev) / dtReal
       st.pPrev = st.p
-      st.vp += (vRaw - st.vp) * (1 - Math.exp(-dt / 0.045))
+      st.vp += (vRaw - st.vp) * (1 - Math.exp(-dtReal / 0.045))
     } else st.vp = 0
 
     let hand = false
@@ -266,7 +268,7 @@ export function createPullEngine(el, hooks = {}) {
     const scale = g.small ? 0.62 : 1
     const sx = g.x0 + sim.s * g.ppm
     const back = sx - g.sledW * 0.95
-    st.acc += v * (g.small ? 10 : 17) * dt * (reduced ? 0.35 : 1)
+    st.acc += v * (g.small ? 13 : 24) * dt * (reduced ? 0.3 : 1)
     while (st.acc >= 1) {
       st.acc -= 1
       const y = g.cy + (Math.random() - 0.5) * g.sledH * 1.35
@@ -277,7 +279,7 @@ export function createPullEngine(el, hooks = {}) {
         y,
         vx: -v * g.ppm * (0.2 + Math.random() * 0.5),
         vy: 0,
-        len: (12 + v * 11 + v * v * 2.4) * scale * (0.55 + Math.random() * 0.9),
+        len: (16 + v * 15 + v * v * 3.2) * scale * (0.55 + Math.random() * 0.9),
         w: Math.random() < 0.3 ? 2 : 1,
         life: 0.22 + Math.random() * 0.24,
         age: 0,
@@ -418,6 +420,10 @@ export function createPullEngine(el, hooks = {}) {
       el.handle.classList.toggle('is-taut', taut)
     }
 
+    // heat smear trailing the sled: length and strength follow speed
+    const sm = Math.min(1, v / 6.5)
+    el.smear.style.transform = `translate3d(${r1(sx - sledW * 0.6)}px,0,0) scaleX(${r4(sm)})`
+    el.smear.style.opacity = sm > 0.02 && !reduced ? `${r2(0.35 + sm * 0.65)}` : '0'
     el.chip.style.transform = `translate3d(${r1(sx)}px,0,0)`
     el.flag.style.transform = `translate3d(${r1(x0 + st.peakS * ppm)}px,0,0)`
     const reach = Math.max(st.maxS, sim.s)

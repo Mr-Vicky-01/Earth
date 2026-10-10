@@ -110,7 +110,7 @@ export function Hero({ ready }) {
       const m = motion.current
       const tl = gsap.timeline({
         defaults: { ease: 'none' },
-        scrollTrigger: { trigger: root.current, start: 'top top', end: 'bottom top', scrub: true },
+        scrollTrigger: { trigger: root.current, start: 'top top', end: 'bottom top', scrub: true, invalidateOnRefresh: true },
       })
       tl.to(m, { exit: 1, duration: 1 }, 0)
         .to(ui.current, { y: () => -0.32 * window.innerHeight, duration: 1 }, 0)

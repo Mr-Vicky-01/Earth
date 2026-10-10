@@ -82,6 +82,7 @@ export function Pull({ ready }) {
   const trackRef = useRef(null)
   const stageRef = useRef(null)
   const canvasRef = useRef(null)
+  const smearRef = useRef(null)
   const trailRef = useRef(null)
   const progRef = useRef(null)
   const flagRef = useRef(null)
@@ -132,6 +133,7 @@ export function Pull({ ready }) {
         track: trackRef.current,
         stage: stageRef.current,
         canvas: canvasRef.current,
+        smear: smearRef.current,
         trail: trailRef.current,
         prog: progRef.current,
         flag: flagRef.current,
@@ -366,6 +368,7 @@ export function Pull({ ready }) {
                 <div ref={trailRef} className="pull-trail" />
                 <div ref={progRef} className="pull-prog" />
               </div>
+              <div ref={smearRef} className="pull-smear" aria-hidden="true" />
               <canvas ref={canvasRef} className="pull-fx" aria-hidden="true" />
               <div ref={flagRef} className="pull-flag" aria-hidden="true">
                 <span className="pull-flag-in mono tnum">

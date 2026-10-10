@@ -21,11 +21,11 @@ export const YANK_T = 0.2 // its duration (s)
 export const RATINGS = ['Warm-up pace', 'Working set', 'Explosive', 'Elite pull']
 export const ratingIndex = (v) => (v >= 5 ? 3 : v >= 3 ? 2 : v >= 1.5 ? 1 : 0)
 
-/** pointer speed (m/s at track scale) → hand speed (m/s). 3 s across the track ≈ 1.1, 0.2 s ≈ 6.3 */
+/** pointer speed (m/s at track scale) → hand speed (m/s). 3 s across the track ≈ 1.25, 0.2 s ≈ 6.8 */
 export function handSpeed(vp) {
   const q = vp / TRACK_M
   if (!(q > 0.015)) return 0
-  return Math.min(MAX_V, 2.25 * Math.pow(q, 0.64))
+  return Math.min(MAX_V, 2.5 * Math.pow(q, 0.62))
 }
 
 /** keyboard hold: ramps up to a steady strong pull */

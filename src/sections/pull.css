@@ -208,6 +208,7 @@
   .pull-num {
     --w: 68;
     font-size: clamp(2.2rem, 3.9vw, 3.9rem);
+    line-height: 1; /* same line box as the Odometer, so every stat sits on one baseline */
   }
   .pull-stat.pull-rate {
     grid-column: 1 / -1;
@@ -302,8 +303,8 @@
   }
   .pull-track {
     --sl: 63.8px;
-    --sled-h: 80px;
-    --sled-w: 124px;
+    --sled-h: 94px;
+    --sled-w: 146px;
     position: relative;
     height: 300px;
     overflow: hidden;
@@ -316,8 +317,8 @@
   @media (max-width: 639px) {
     .pull-track {
       --sl: 0px;
-      --sled-h: 42px;
-      --sled-w: 65px;
+      --sled-h: 44px;
+      --sled-w: 68px;
       height: 220px;
       margin-inline: calc(-1 * clamp(16px, 4vw, 64px));
       clip-path: none;
@@ -456,6 +457,21 @@
     transform-origin: 0 50%;
     transform: scaleX(0);
     will-change: transform;
+  }
+  .pull-smear {
+    position: absolute;
+    left: 0;
+    top: calc(50% - var(--sled-h) * 0.4);
+    width: calc(var(--sled-w) * 3.2);
+    height: calc(var(--sled-h) * 0.8);
+    margin-left: calc(var(--sled-w) * -3.2);
+    background: linear-gradient(90deg, transparent, rgb(255 75 31 / 0.18) 55%, rgb(255 75 31 / 0.5));
+    transform-origin: 100% 50%;
+    opacity: 0;
+    pointer-events: none;
+    will-change: transform, opacity;
+    -webkit-mask: repeating-linear-gradient(180deg, #000 0 3px, transparent 3px 7px);
+    mask: repeating-linear-gradient(180deg, #000 0 3px, transparent 3px 7px);
   }
   .pull-fx {
     position: absolute;
@@ -634,7 +650,7 @@
     height: 20px;
     border: 3px solid var(--color-chrome);
     border-right: 0;
-    margin-right: -2px;
+    margin-right: 5px;
   }
   .pull-grip-plate {
     --accent: var(--color-ink);
@@ -681,8 +697,9 @@
       margin-top: -25px;
     }
     .pull-grip-loop {
-      width: 9px;
+      width: 8px;
       height: 16px;
+      margin-right: 3px;
     }
     .pull-grip-txt {
       font-size: 1.05rem;
