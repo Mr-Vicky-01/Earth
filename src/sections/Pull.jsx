@@ -97,6 +97,7 @@ export function Pull({ ready }) {
   const gripRef = useRef(null)
   const hintRef = useRef(null)
   const againRef = useRef(null)
+  const statusRef = useRef(null)
   const engineRef = useRef(null)
 
   useSectionEdge(secRef)
@@ -161,6 +162,7 @@ export function Pull({ ready }) {
           gsap.to(hintRef.current.firstChild, { autoAlpha: 0, x: 28, duration: reduced ? 0 : 0.3, ease: 'expo.out' })
         },
         onStart() {
+          statusRef.current.dataset.state = 'live'
           setDone(false)
           setMsg('')
         },
@@ -178,6 +180,7 @@ export function Pull({ ready }) {
             setBest(peak)
             slamStamp(prev, peak)
           }
+          statusRef.current.dataset.state = 'done'
           setDone(true)
           setMsg(
             `Peak ${peak.toFixed(2)} metres per second, ${RATINGS[ratingIndex(peak)].toLowerCase()}. ` +
@@ -185,6 +188,7 @@ export function Pull({ ready }) {
           )
         },
         onReset() {
+          statusRef.current.dataset.state = 'idle'
           setDone(false)
           hideStamp()
           const el = ratingRef.current
@@ -225,7 +229,7 @@ export function Pull({ ready }) {
           { autoAlpha: 1, x: 0, skewX: 0, duration: reduced ? 0 : 0.6, delay: reduced ? 0 : 0.12, ease: 'expo.out' },
         )
       } else {
-        gsap.to(el, { autoAlpha: 0, x: 40, skewX: 12, duration: reduced ? 0 : 0.2, ease: 'power2.in' })
+        gsap.to(el, { autoAlpha: 0, x: 20, skewX: 12, duration: reduced ? 0 : 0.2, ease: 'power2.in' })
       }
     },
     { dependencies: [done], scope: againRef },
@@ -253,10 +257,23 @@ export function Pull({ ready }) {
               gain={26}
             />
           </div>
-          <p className="lead pull-lead">
-            Grab the handle and yank it to the right. We clock the sled the way we clock every rep on the floor: peak
-            speed, in metres per second.
-          </p>
+          <div className="pull-intro">
+            <p className="lead pull-lead">
+              Grab the handle and yank it to the right. We clock the sled the way we clock every rep on the floor: peak
+              speed, in metres per second.
+            </p>
+            <ul className="pull-specs mono">
+              <li>
+                <span className="mute">Lane</span> 30 m turf
+              </li>
+              <li>
+                <span className="mute">Sled</span> 60 kg loaded
+              </li>
+              <li>
+                <span className="mute">Clocked</span> m/s, 2 dp
+              </li>
+            </ul>
+          </div>
         </div>
 
         <div ref={readoutRef} className="pull-readout">
@@ -284,7 +301,9 @@ export function Pull({ ready }) {
                     </div>
                   </div>
                 </div>
-                <div ref={meterPeakRef} className="pull-meter-peak" />
+                <div className="pull-meter-lane">
+                  <div ref={meterPeakRef} className="pull-meter-peak" />
+                </div>
               </div>
               <div className="pull-zones mono">
                 {ZONES.map((z) => (
@@ -342,6 +361,12 @@ export function Pull({ ready }) {
         <div className="pull-track-wrap">
           <div ref={trackRef} className="pull-track">
             <div ref={stageRef} className="pull-stage">
+              <p ref={statusRef} className="pull-status mono" data-state="idle" aria-hidden="true">
+                <span className="pull-status-dot" />
+                <span className="pull-status-t is-idle">Sensor armed</span>
+                <span className="pull-status-t is-live">Clocking</span>
+                <span className="pull-status-t is-done">Logged</span>
+              </p>
               <div className="pull-turf" aria-hidden="true">
                 <div className="pull-bay" />
                 <div className="pull-runoff" />
@@ -415,7 +440,8 @@ export function Pull({ ready }) {
 
         <div className="pull-controls">
           <p id="pull-help" className="pull-help mono">
-            Drag the handle right, fast. Keyboard: hold → or Space to pull, Enter for one hard yank.
+            Drag the handle right, fast.{' '}
+            <span className="pull-help-keys">Keyboard: hold → or Space to pull, Enter for one hard yank.</span>
           </p>
           <div ref={againRef} className="pull-again" inert={!done}>
             <SpeedButton variant="paper" size="sm" onClick={onAgain}>

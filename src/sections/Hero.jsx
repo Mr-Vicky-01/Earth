@@ -12,7 +12,12 @@ import './hero.css'
 const HeroScene = lazy(() => import('../three/HeroScene.jsx').then((m) => ({ default: m.HeroScene })))
 
 const OMEGA_MAX = 45 // rad/s
-const IDLE_OMEGA = 0.5 // rad/s
+// At rest the bell settles into a 3/4 view with the handle and the 24 KG mark facing the camera and sways gently.
+// It never idles side-on: the handle is a flat arch, and edge-on it reads as a single post.
+const SHOWCASE = -0.38 // rad
+const SWAY = 0.2 // rad either side of the showcase angle while idle
+const FREE_SPIN = 2.6 // rad/s; above this the bell coasts freely, below it the settle spring takes over
+const TAU = Math.PI * 2
 const INTRO_TURNS = 3 // full turns the bell spins through while dropping out of warp
 const RPM_HOT = 120
 const WARP_HOT = 3
@@ -46,7 +51,8 @@ export function Hero({ ready }) {
   if (!motion.current) {
     motion.current = {
       angle: -0.55,
-      omega: reduced ? 0 : IDLE_OMEGA,
+      omega: 0,
+      settle: null,
       tilt: 0,
       tiltVel: 0,
       tiltTarget: 0,
@@ -165,6 +171,7 @@ export function Hero({ ready }) {
     const end = (e, fling) => {
       if (e.pointerId !== id) return
       if (engaged && fling) m.omega = clamp(flingOmega(stamp(e)), -OMEGA_MAX, OMEGA_MAX)
+      m.settle = null
       m.dragging = false
       m.tiltTarget = 0
       engaged = false
@@ -205,6 +212,7 @@ export function Hero({ ready }) {
       const dx = e.clientX - lx
       const dtMs = Math.max(now - lt, 1)
       m.angle += dx * k
+      m.settle = null
       const inst = clamp(((dx * k) / dtMs) * 1000, -OMEGA_MAX, OMEGA_MAX)
       m.omega += (inst - m.omega) * 0.4
       m.lastMove = now
@@ -255,17 +263,29 @@ export function Hero({ ready }) {
 
   /* ---------------- physics + HUD (gsap ticker, ~15 Hz text) ---------------- */
   const hud = useRef({ acc: 0, rpm: -1, warp: '', hotR: null, hotW: null, prevSpin: null })
-  useTicker((_, deltaMs) => {
+  useTicker((time, deltaMs) => {
     const m = motion.current
     const h = hud.current
     const dt = Math.min(Math.max(deltaMs, 1), 50) / 1000
-    const idle = reduced ? 0 : IDLE_OMEGA
 
     if (m.dragging) {
       // held still mid-drag → measured speed falls away quickly
       if (performance.now() - m.lastMove > 50) m.omega *= Math.exp(-dt * 12)
     } else {
-      m.omega = idle + (m.omega - idle) * Math.exp(-dt * 0.8)
+      if (m.settle === null && Math.abs(m.omega) > FREE_SPIN) {
+        // flung: coast and slow down
+        m.omega *= Math.exp(-dt * 0.8)
+      } else {
+        if (m.settle === null) {
+          // aim for the showcase angle nearest to where the coast would have stopped, so it never spins back
+          const proj = m.angle + m.omega / 2.4
+          m.settle = SHOWCASE + Math.round((proj - SHOWCASE) / TAU) * TAU
+        }
+        const target = m.settle + (reduced ? 0 : Math.sin(time * 0.55) * SWAY)
+        // critically damped spring toward the showcase angle
+        const K = 9
+        m.omega += ((target - m.angle) * K - m.omega * 2 * Math.sqrt(K)) * dt
+      }
       m.angle += m.omega * dt
     }
     // vertical drag tilt: spring back

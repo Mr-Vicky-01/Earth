@@ -574,6 +574,11 @@ export function createPullEngine(el, hooks = {}) {
     endKey()
   }
   const onCtx = (e) => e.preventDefault()
+  // touch-action: none does the job in modern browsers; this also stops the page scrolling
+  // under a drag where touch-action is ignored (older iOS Safari, synthesized touches)
+  const onTouchMove = (e) => {
+    if (e.cancelable) e.preventDefault()
+  }
 
   const h = el.handle
   h.addEventListener('pointerdown', onDown)
@@ -585,6 +590,7 @@ export function createPullEngine(el, hooks = {}) {
   h.addEventListener('keyup', onKeyUp)
   h.addEventListener('blur', endKey)
   h.addEventListener('contextmenu', onCtx)
+  h.addEventListener('touchmove', onTouchMove, { passive: false })
 
   /* ---------------- public ---------------- */
   function reset() {
@@ -662,6 +668,7 @@ export function createPullEngine(el, hooks = {}) {
     h.removeEventListener('keyup', onKeyUp)
     h.removeEventListener('blur', endKey)
     h.removeEventListener('contextmenu', onCtx)
+    h.removeEventListener('touchmove', onTouchMove)
     if (el.faster) {
       el.faster.style.fontStretch = ''
       el.faster.style.transform = ''

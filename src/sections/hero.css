@@ -52,7 +52,7 @@
 
   /* ---------- live HUD ---------- */
   .hero-hud {
-    width: 14.5rem;
+    width: clamp(10.5rem, 17vw, 14.5rem);
     border-top: 1px solid var(--line);
   }
   .hero-hud-row {

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { Environment, Lightformer } from '@react-three/drei'
@@ -109,22 +109,9 @@ function Kettlebell({ motion, reduced }) {
   const labelTex = useMemo(() => createLabelTexture(), [])
   const mats = useMemo(
     () => ({
-      chrome: new THREE.MeshPhysicalMaterial({
-        color: '#e9e9ef',
-        metalness: 1,
-        roughness: 0.1,
-        clearcoat: 1,
-        clearcoatRoughness: 0.03,
-        envMapIntensity: 1.25,
-      }),
-      grip: new THREE.MeshPhysicalMaterial({
-        color: '#e4e5ec',
-        metalness: 1,
-        roughness: 0.16,
-        clearcoat: 0.6,
-        clearcoatRoughness: 0.08,
-        envMapIntensity: 1.2,
-      }),
+      // single-layer polished chrome: a clear coat on top doubled every reflection into hard bars
+      chrome: new THREE.MeshStandardMaterial({ color: '#eceef4', metalness: 1, roughness: 0.13, envMapIntensity: 1.35 }),
+      grip: new THREE.MeshStandardMaterial({ color: '#e6e8ef', metalness: 1, roughness: 0.17, envMapIntensity: 1.3 }),
       foot: new THREE.MeshStandardMaterial({ color: '#191a26', metalness: 1, roughness: 0.34, envMapIntensity: 0.9 }),
       band: new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false }),
       label: new THREE.MeshStandardMaterial({
@@ -167,8 +154,10 @@ function Kettlebell({ motion, reduced }) {
     camera.rotateZ((1 - intro) * 0.32)
     camera.fov = Math.min(54, 34 + energy * 5 + (1 - intro) * 12 + exit * 12 + scroll.abs * 4)
     // composition: push the subject right (desktop) or up (phone) without changing perspective
-    const fx = portrait ? 0 : 0.175
-    const fy = portrait ? 0.152 : 0.085
+    // narrower desktops push the bell further right so the headline and HUD keep clear of it
+    const fx = portrait ? 0 : 0.175 + clamp((1320 - size.width) / 420, 0, 1) * 0.05
+    // short desktop frames sit the bell lower so the handle clears the HUD in the top-right
+    const fy = portrait ? 0.152 : 0.085 - clamp((820 - size.height) / 300, 0, 1) * 0.075
     camera.setViewOffset(size.width, size.height, -fx * size.width, fy * size.height, size.width, size.height)
 
     // kettlebell
@@ -176,7 +165,10 @@ function Kettlebell({ motion, reduced }) {
     const sp = spinner.current
     if (g && sp) {
       const aspect = size.width / size.height
-      const s = portrait ? clamp(aspect * 1.3, 0.56, 0.9) : 0.84 * clamp(aspect / 1.55, 0.86, 1)
+      // short or narrow desktop frames get a smaller bell so the handle stays below the HUD
+      const s = portrait
+        ? clamp(aspect * 1.3, 0.56, 0.9)
+        : 0.84 * clamp(aspect / 1.55, 0.86, 1) * clamp(size.height / 820, 0.8, 1) * clamp(size.width / 1320, 0.86, 1)
       g.scale.setScalar(s)
       const bob = reduced ? 0 : Math.sin(t * 1.15) * 0.06
       // scroll exit: rises, tips away and shoots off down the tunnel
@@ -211,27 +203,26 @@ function Kettlebell({ motion, reduced }) {
 /* ------------------------------------------------------------------ */
 /* Studio for reflections: hard strips, a heat ring, a cobalt panel     */
 /* ------------------------------------------------------------------ */
-function Studio() {
+// memoised: <Environment> re-renders its cube map whenever its children change
+const Studio = memo(function Studio() {
   return (
     <Environment resolution={256} frames={1}>
-      <color attach="background" args={['#04050f']} />
-      {/* soft sky + hard white strips: crisp bright/dark bands on the chrome */}
-      <Lightformer form="rect" intensity={1.5} color="#dfe3ff" position={[0, 7, 0]} scale={[9, 9, 1]} />
-      <Lightformer form="rect" intensity={6} position={[0, 4, 5]} scale={[12, 0.55, 1]} />
-      <Lightformer form="rect" intensity={3.4} position={[0, 0.7, 8]} scale={[16, 0.85, 1]} />
-      <Lightformer form="rect" intensity={2.4} position={[0, -1.5, 8]} scale={[16, 0.2, 1]} />
-      <Lightformer form="rect" intensity={7} position={[-7, 1, 2]} scale={[0.8, 14, 1]} />
-      <Lightformer form="rect" intensity={5} position={[7, 1, 0]} scale={[0.45, 14, 1]} />
-      <Lightformer form="rect" intensity={4} position={[-3, 2, -7]} scale={[0.4, 10, 1]} />
-      {/* heat strip + small heat ring */}
-      <Lightformer form="rect" intensity={5} color={HEAT} position={[6, -1, 4]} scale={[0.6, 8, 1]} />
-      <Lightformer form="ring" intensity={4} color={HEAT} position={[-5, 4, 4]} scale={1.2} />
-      {/* deep cobalt floor + panel so the chrome sits in the scene's colour */}
-      <Lightformer form="rect" intensity={1.6} color={COBALT} position={[0, -7, 0]} scale={[20, 20, 1]} />
-      <Lightformer form="rect" intensity={1.2} color="#1626c9" position={[-5, -3, 5]} scale={[10, 5, 1]} />
+      <color attach="background" args={['#070a24']} />
+      {/* broad soft key above-front: one smooth highlight across the crown and shoulders */}
+      <Lightformer form="rect" intensity={2.6} color="#eef0ff" position={[0, 6, 4]} rotation-x={-Math.PI / 3} scale={[10, 5, 1]} />
+      {/* tall side strips: long vertical highlights down each flank, the classic chrome read */}
+      <Lightformer form="rect" intensity={5.5} position={[-6.5, 0.5, 2.5]} rotation-y={Math.PI / 2.6} scale={[1.6, 12, 1]} />
+      <Lightformer form="rect" intensity={3.2} position={[6.5, 0.5, 1]} rotation-y={-Math.PI / 2.4} scale={[1, 12, 1]} />
+      {/* soft fill from the camera side so the front never goes black */}
+      <Lightformer form="rect" intensity={0.45} color="#c9d0ff" position={[0, -1.6, 9]} scale={[26, 2.4, 1]} />
+      {/* heat rim from behind-right and a small heat glint */}
+      <Lightformer form="rect" intensity={4} color={HEAT} position={[5, 1, -5]} rotation-y={-Math.PI / 4} scale={[1.2, 9, 1]} />
+      <Lightformer form="circle" intensity={3} color={HEAT} position={[-4, 4.5, 3]} scale={0.9} />
+      {/* deep cobalt floor so the lower half sits in the scene's colour */}
+      <Lightformer form="rect" intensity={1.8} color={COBALT} position={[0, -6, 0]} rotation-x={Math.PI / 2} scale={[20, 20, 1]} />
     </Environment>
   )
-}
+})
 
 /* ------------------------------------------------------------------ */
 /* Post: bloom, speed-driven chromatic aberration, light vignette       */
