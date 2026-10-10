@@ -94,11 +94,13 @@ export function createPullEngine(el, hooks = {}) {
     g.sledH = el.sled.offsetHeight
     g.handleW = el.handle.offsetWidth
     g.x0 = sl / 2 + g.sledW + (small ? 12 : 30)
-    const xEnd = W - sl / 2 - g.handleW - (small ? 12 : 28)
+    // room past the finish for the handle, kept clear of the slanted end of the lane
+    const edge = W - sl / 2 - (sl ? (g.handleW * 0.32 + 6) : 4)
+    const xEnd = edge - g.handleW - (small ? 8 : 22)
     g.span = xEnd - g.x0
     g.ppm = g.span / TRACK_M
     sim.L = (0.12 * W) / g.ppm
-    sim.hMax = (W - sl / 2 - g.handleW - 4 - g.x0) / g.ppm
+    sim.hMax = (edge - g.handleW - g.x0) / g.ppm
     sim.gap = 5 / g.ppm
     const ts = el.track.style
     ts.setProperty('--x0', `${r1(g.x0)}px`)
