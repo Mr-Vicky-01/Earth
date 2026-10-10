@@ -109,14 +109,23 @@ function Kettlebell({ motion, reduced }) {
   const labelTex = useMemo(() => createLabelTexture(), [])
   const mats = useMemo(
     () => ({
-      // glossy painted steel, one cast piece: orange is the competition colour for a 28 kg bell
-      paint: new THREE.MeshPhysicalMaterial({
-        color: '#ff4f1f',
-        metalness: 0.08,
-        roughness: 0.34,
-        clearcoat: 1,
-        clearcoatRoughness: 0.05,
-        envMapIntensity: 1.15,
+      // satin silver steel: rough enough that it holds its own silver tone everywhere (a mirror only shows
+      // its surroundings and went dark underneath), with a light lacquer for crisp highlights
+      body: new THREE.MeshPhysicalMaterial({
+        color: '#dadde6',
+        metalness: 1,
+        roughness: 0.26,
+        clearcoat: 0.55,
+        clearcoatRoughness: 0.1,
+        envMapIntensity: 1.05,
+      }),
+      handle: new THREE.MeshPhysicalMaterial({
+        color: '#d4d7e0',
+        metalness: 1,
+        roughness: 0.32,
+        clearcoat: 0.4,
+        clearcoatRoughness: 0.14,
+        envMapIntensity: 1.0,
       }),
       foot: new THREE.MeshStandardMaterial({ color: '#191a26', metalness: 1, roughness: 0.34, envMapIntensity: 0.9 }),
       label: new THREE.MeshStandardMaterial({
@@ -182,9 +191,11 @@ function Kettlebell({ motion, reduced }) {
       sp.rotation.set(motion.tilt + exit * 0.9, motion.angle + exit * Math.PI * 1.4, 0)
     }
     if (rim.current) rim.current.intensity = 6 + energy * 150 + (1 - intro) * 60
-    // the paint glows hotter while it spins
-    mats.paint.emissive.copy(heatLinear)
-    mats.paint.emissiveIntensity = 0.05 + energy * 0.5
+    // the steel heats up while it spins
+    mats.body.emissive.copy(heatLinear)
+    mats.body.emissiveIntensity = energy * 0.35
+    mats.handle.emissive.copy(heatLinear)
+    mats.handle.emissiveIntensity = energy * 0.35
   })
 
   return (
@@ -192,8 +203,8 @@ function Kettlebell({ motion, reduced }) {
       <group ref={rig}>
         <group ref={spinner}>
           <group position-y={-KB_CENTER_Y}>
-            <mesh geometry={geo.body} material={mats.paint} />
-            <mesh geometry={geo.handle} material={mats.paint} />
+            <mesh geometry={geo.body} material={mats.body} />
+            <mesh geometry={geo.handle} material={mats.handle} />
             <mesh geometry={geo.foot} material={mats.foot} />
             <mesh geometry={geo.label} material={mats.label} renderOrder={2} />
           </group>
@@ -213,19 +224,22 @@ function Kettlebell({ motion, reduced }) {
 const Studio = memo(function Studio() {
   return (
     <Environment resolution={256} frames={1}>
-      <color attach="background" args={['#070a24']} />
-      {/* broad soft key above-front: one smooth highlight across the crown and shoulders */}
-      <Lightformer form="rect" intensity={2.6} color="#eef0ff" position={[0, 6, 4]} rotation-x={-Math.PI / 3} scale={[10, 5, 1]} />
-      {/* tall side strips: long vertical highlights down each flank, the classic chrome read */}
-      <Lightformer form="rect" intensity={5.5} position={[-6.5, 0.5, 2.5]} rotation-y={Math.PI / 2.6} scale={[1.6, 12, 1]} />
-      <Lightformer form="rect" intensity={3.2} position={[6.5, 0.5, 1]} rotation-y={-Math.PI / 2.4} scale={[1, 12, 1]} />
-      {/* soft fill from the camera side so the front never goes black */}
-      <Lightformer form="rect" intensity={0.45} color="#c9d0ff" position={[0, -1.6, 9]} scale={[26, 2.4, 1]} />
+      {/* mid slate world: the silver reflects a mid tone everywhere, never black */}
+      <color attach="background" args={['#4b5278']} />
+      {/* big softbox overhead: smooth bright crown and shoulders */}
+      <Lightformer form="rect" intensity={2.1} color="#ffffff" position={[0, 7, 2]} rotation-x={-Math.PI / 2.4} scale={[12, 6, 1]} />
+      {/* tall side strips: long vertical highlights down each flank */}
+      <Lightformer form="rect" intensity={4.2} position={[-6.5, 0.5, 2.5]} rotation-y={Math.PI / 2.6} scale={[1.6, 12, 1]} />
+      <Lightformer form="rect" intensity={3} position={[6.5, 0.5, 1]} rotation-y={-Math.PI / 2.4} scale={[1, 12, 1]} />
+      {/* light floor: the underside reflects a bright surface, so the bottom stays silver */}
+      <Lightformer form="rect" intensity={1.25} color="#dfe2ec" position={[0, -6, 0]} rotation-x={Math.PI / 2} scale={[22, 22, 1]} />
+      {/* soft horizon band from the camera side */}
+      <Lightformer form="rect" intensity={0.55} color="#e9ecff" position={[0, -0.6, 9]} scale={[24, 3, 1]} />
+      {/* cobalt bounce low-left so the steel sits in the scene's colour */}
+      <Lightformer form="rect" intensity={1.4} color={COBALT} position={[-6, -2.5, 4]} rotation-y={Math.PI / 4} scale={[8, 4, 1]} />
       {/* heat rim from behind-right and a small heat glint */}
       <Lightformer form="rect" intensity={4} color={HEAT} position={[5, 1, -5]} rotation-y={-Math.PI / 4} scale={[1.2, 9, 1]} />
       <Lightformer form="circle" intensity={3} color={HEAT} position={[-4, 4.5, 3]} scale={0.9} />
-      {/* deep cobalt floor so the lower half sits in the scene's colour */}
-      <Lightformer form="rect" intensity={1.1} color={COBALT} position={[0, -6, 0]} rotation-x={Math.PI / 2} scale={[20, 20, 1]} />
     </Environment>
   )
 })
