@@ -1,0 +1,174 @@
+@layer components {
+  .kin {
+    padding-bottom: clamp(5rem, 10vw, 9rem);
+  }
+  .kin-marquees {
+    padding-top: clamp(1.5rem, 4vw, 3.5rem);
+    display: grid;
+    gap: 0.2em;
+  }
+  .kin-mq-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    padding-right: 0.35em;
+    font-size: clamp(3.4rem, 9.5vw, 9.5rem);
+  }
+  .kin-mq-item .speed-glyph {
+    font-size: 1em;
+    width: 0.62em;
+    height: 0.3em;
+  }
+  .kin-mq-alt {
+    color: var(--color-cobalt);
+    --fg: var(--color-cobalt);
+  }
+
+  /* zones chart */
+  .kin-chart {
+    border-top: 2px solid var(--fg);
+    padding-top: 1.25rem;
+    margin-top: 3rem;
+  }
+  .kin-row-range {
+    display: none;
+    font-size: 0.66rem;
+  }
+  .kin-row {
+    display: grid;
+    grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+    gap: 1.25rem;
+    align-items: center;
+    padding-block: 0.45rem;
+    border-bottom: 1px solid var(--line);
+    cursor: default;
+  }
+  .kin-row-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+    transition: transform 0.45s var(--ease-expo);
+  }
+  .kin-row-name {
+    font-size: 1.35rem;
+    line-height: 1;
+  }
+  .kin-row.is-on .kin-row-label {
+    transform: translateX(10px);
+  }
+  .kin-track {
+    position: relative;
+    height: 2.6rem;
+  }
+  .kin-band {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0 0.9rem;
+    background: var(--color-ink);
+    color: var(--color-paper);
+    transform-origin: 0 50%;
+    transition: background-color 0.25s;
+    overflow: hidden;
+  }
+  .kin-band::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(105deg, transparent 0 14px, rgb(239 238 233 / 0.07) 14px 16px);
+    pointer-events: none;
+  }
+  .kin-row.is-on .kin-band {
+    background: var(--color-cobalt);
+  }
+  .kin-band .mono {
+    font-size: 0.66rem;
+    white-space: nowrap;
+  }
+  .kin-axis {
+    position: relative;
+    height: 2rem;
+    margin-top: 0.6rem;
+  }
+  .kin-tick {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    color: var(--mute);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .kin-tick:first-child {
+    transform: none;
+  }
+  .kin-tick:first-child::before {
+    margin-left: 0;
+  }
+  .kin-tick:last-child {
+    transform: translateX(-100%);
+  }
+  .kin-tick:last-child::before {
+    margin-right: 0;
+  }
+  .kin-tick::before {
+    content: "";
+    display: block;
+    width: 1px;
+    height: 8px;
+    margin: 0 auto 4px;
+    background: var(--fg);
+  }
+  .kin-marker {
+    position: absolute;
+    top: -0.75rem;
+    bottom: 2.4rem;
+    width: 2px;
+    background: var(--color-heat);
+    pointer-events: none;
+    z-index: 2;
+    will-change: transform;
+  }
+  .kin-marker-read {
+    position: absolute;
+    top: -1.9rem;
+    left: 0;
+    transform: translateX(-50%) skewX(var(--slant));
+    padding: 0.2rem 0.55rem;
+    background: var(--color-heat);
+    color: var(--color-ink);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .kin-detail {
+    min-height: 4.5rem;
+  }
+
+  @media (max-width: 760px) {
+    .kin-row {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.4rem;
+    }
+    .kin-band .mono {
+      display: none;
+    }
+    .kin-row-range {
+      display: block;
+    }
+    .kin-track {
+      height: 1.4rem;
+    }
+    .kin-tick:nth-child(even) {
+      display: none;
+    }
+  }
+}

@@ -1,0 +1,166 @@
+@property --price-a {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@layer components {
+  .price-toggle {
+    position: relative;
+    display: inline-grid;
+    grid-template-columns: 1fr 1fr;
+    isolation: isolate;
+  }
+  .price-toggle::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    border: 1px solid var(--line);
+    transform: skewX(var(--slant));
+  }
+  .price-toggle button {
+    position: relative;
+    height: 3rem;
+    padding: 0 1.6rem;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--mute);
+    transition: color 0.3s;
+  }
+  .price-toggle button[aria-pressed="true"] {
+    color: var(--color-ink);
+  }
+  .price-thumb {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 50%;
+    z-index: -1;
+    background: var(--color-heat);
+    transform: skewX(var(--slant));
+    transition: transform 0.5s var(--ease-expo);
+  }
+  .price-toggle.is-annual .price-thumb {
+    transform: translateX(100%) skewX(var(--slant));
+  }
+
+  .price-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: clamp(0.75rem, 1.4vw, 1.25rem);
+    align-items: stretch;
+  }
+  .price-card {
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    flex-direction: column;
+    gap: 1.6rem;
+    padding: clamp(1.4rem, 2.4vw, 2.2rem);
+    overflow: hidden;
+    transition: transform 0.5s var(--ease-expo);
+  }
+  .price-card:hover {
+    transform: translateY(-8px);
+  }
+  /* fast diagonal sheen on hover */
+  .price-card::after {
+    content: "";
+    position: absolute;
+    top: -20%;
+    bottom: -20%;
+    left: 0;
+    width: 40%;
+    z-index: 3;
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.22), transparent);
+    transform: translateX(-160%) skewX(var(--slant));
+    pointer-events: none;
+  }
+  .price-card:hover::after {
+    transform: translateX(380%) skewX(var(--slant));
+    transition: transform 0.75s var(--ease-expo);
+  }
+  .price-card.is-warm {
+    background: var(--color-ink-2);
+    color: var(--color-paper);
+    --fg: var(--color-paper);
+    --mute: var(--color-mute-ink);
+    --line: rgb(239 238 233 / 0.13);
+    border: 1px solid rgb(239 238 233 / 0.1);
+  }
+  .price-card.is-max {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    --fg: var(--color-ink);
+    --mute: var(--color-mute-paper);
+    --line: rgb(10 10 16 / 0.14);
+  }
+  .price-card.is-main {
+    background: var(--color-cobalt);
+    color: var(--color-paper);
+    --fg: var(--color-paper);
+    --mute: rgb(239 238 233 / 0.75);
+    --line: rgb(239 238 233 / 0.24);
+  }
+  /* racing heat light around the featured card */
+  .price-card.is-main::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    padding: 3px;
+    background: conic-gradient(from var(--price-a), transparent 0 50%, var(--color-heat) 74%, #ffd2c4 82%, transparent 90%);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    animation: price-race 2.2s linear infinite;
+  }
+  @keyframes price-race {
+    to {
+      --price-a: 360deg;
+    }
+  }
+  .price-amount {
+    font-size: clamp(4.2rem, 7vw, 7rem);
+    line-height: 0.85;
+  }
+  .price-feat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    font-size: 0.95rem;
+  }
+  .price-feat li {
+    display: grid;
+    grid-template-columns: 1.1rem minmax(0, 1fr);
+    gap: 0.7rem;
+    align-items: start;
+  }
+  .price-feat svg {
+    width: 0.9rem;
+    height: 0.9rem;
+    margin-top: 0.25rem;
+    color: var(--color-heat);
+  }
+  .price-card.is-main .price-feat svg {
+    color: var(--color-paper);
+  }
+  .price-card.is-max .price-feat svg {
+    color: var(--color-cobalt);
+  }
+
+  @media (max-width: 960px) {
+    .price-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .price-card.is-main::before {
+      animation: none;
+    }
+  }
+}

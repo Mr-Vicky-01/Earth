@@ -1,0 +1,183 @@
+@layer components {
+  .coach-list {
+    border-top: 2px solid var(--fg);
+  }
+  .coach-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 15rem) minmax(0, 11rem) 2.75rem;
+    align-items: center;
+    gap: 1.5rem;
+    padding-block: clamp(0.9rem, 1.6vw, 1.4rem);
+    border-bottom: 1px solid var(--line);
+    color: var(--fg);
+    text-align: left;
+    width: 100%;
+  }
+  .coach-name {
+    position: relative;
+    font-size: clamp(2.4rem, 6.2vw, 6.4rem);
+    line-height: 0.88;
+    white-space: nowrap;
+    transition: transform 0.55s var(--ease-expo);
+  }
+  /* the fill: a cobalt copy of the name revealed by a fast clip wipe */
+  .coach-name-fill {
+    position: absolute;
+    inset: 0;
+    color: var(--color-cobalt);
+    clip-path: inset(-10% 100% -10% 0);
+    transition: clip-path 0.5s var(--ease-expo);
+    pointer-events: none;
+  }
+  .coach-row:hover .coach-name-fill,
+  .coach-row:focus-visible .coach-name-fill,
+  .coach-row.is-open .coach-name-fill {
+    clip-path: inset(-10% -2% -10% 0);
+  }
+  .coach-row:hover .coach-name,
+  .coach-row:focus-visible .coach-name {
+    transform: translateX(clamp(0.5rem, 2vw, 2rem));
+  }
+  .coach-role {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+  .coach-num {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.3rem;
+    font-size: clamp(1.4rem, 2vw, 2rem);
+    line-height: 1;
+    text-align: right;
+  }
+  .coach-plus {
+    justify-self: end;
+    width: 2.75rem;
+    height: 2.75rem;
+    display: grid;
+    place-items: center;
+    position: relative;
+    isolation: isolate;
+    transition: transform 0.5s var(--ease-expo), color 0.3s;
+  }
+  .coach-plus::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border: 1px solid var(--line);
+    transform: skewX(var(--slant));
+    transition: background-color 0.3s, border-color 0.3s;
+  }
+  .coach-plus svg {
+    width: 1rem;
+    height: 1rem;
+  }
+  .coach-row:hover .coach-plus,
+  .coach-row.is-open .coach-plus {
+    color: var(--color-paper);
+    transform: rotate(45deg);
+  }
+  .coach-row:hover .coach-plus::before,
+  .coach-row.is-open .coach-plus::before {
+    background: var(--color-ink);
+    border-color: var(--color-ink);
+    transform: skewX(0);
+  }
+
+  /* inline detail (touch + keyboard) */
+  .coach-detail {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.5s var(--ease-expo);
+  }
+  .coach-detail > div {
+    overflow: hidden;
+  }
+  .coach-detail.is-open {
+    grid-template-rows: 1fr;
+  }
+
+  /* floating card that chases the cursor (fine pointers only) */
+  .coach-float {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 60;
+    width: 300px;
+    height: 380px;
+    pointer-events: none;
+    opacity: 0;
+    will-change: transform;
+  }
+  .coach-card {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 1.1rem;
+    color: var(--color-paper);
+  }
+  .coach-card-mark {
+    position: absolute;
+    right: -0.08em;
+    bottom: -0.12em;
+    font-size: 12rem;
+    line-height: 0.8;
+    opacity: 0.95;
+  }
+  .coach-card-lines {
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(102deg, transparent 0 22px, rgb(239 238 233 / 0.1) 22px 24px);
+    animation: coach-lines 0.9s linear infinite;
+  }
+  @keyframes coach-lines {
+    to {
+      background-position: 48px 0;
+    }
+  }
+  .coach-card-strip {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    will-change: transform;
+  }
+  .coach-card-strip > .coach-card {
+    position: relative;
+    flex: none;
+    height: 380px;
+  }
+
+  @media (max-width: 899px) {
+    .coach-row {
+      grid-template-columns: minmax(0, 1fr) 2.75rem;
+      row-gap: 0.4rem;
+    }
+    .coach-role {
+      grid-column: 1;
+      grid-row: 2;
+    }
+    .coach-num {
+      display: none;
+    }
+    .coach-plus {
+      grid-column: 2;
+      grid-row: 1 / span 2;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .coach-card-lines {
+      animation: none;
+    }
+  }
+}

@@ -1,0 +1,89 @@
+@layer components {
+  .fin-cta {
+    min-height: 100svh;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+  }
+  .fin-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+  }
+  .fin-glow {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: radial-gradient(40% 50% at var(--gx, 60%) var(--gy, 50%), rgb(255 75 31 / 0.28), transparent 70%);
+    pointer-events: none;
+  }
+
+  .fin-foot {
+    padding-top: clamp(4rem, 8vw, 7rem);
+    overflow: hidden;
+  }
+  .fin-col h3 {
+    margin-bottom: 1rem;
+  }
+  .fin-link {
+    display: inline-flex;
+    color: var(--color-paper);
+    text-decoration: none;
+    font-size: 1rem;
+    padding-block: 0.2rem;
+  }
+  .fin-link:hover {
+    color: var(--color-heat);
+  }
+  .fin-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: clamp(1.2rem, 2vw, 1.6rem);
+    font-weight: 600;
+    color: var(--color-paper);
+  }
+  .fin-copy .mono {
+    padding: 0.25rem 0.55rem;
+    position: relative;
+    isolation: isolate;
+    color: var(--color-ink);
+  }
+  .fin-copy .mono::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: var(--color-paper);
+    transform: skewX(var(--slant));
+    transition: background-color 0.25s;
+  }
+  .fin-copy:hover .mono::before,
+  .fin-copy.is-done .mono::before {
+    background: var(--color-heat);
+  }
+  .fin-word {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    width: 100%;
+    font-size: clamp(5.5rem, 26.5vw, 30rem);
+    line-height: 0.74;
+    margin-top: clamp(3rem, 6vw, 5rem);
+    user-select: none;
+  }
+  .fin-word span {
+    display: inline-block;
+    font-stretch: calc(var(--w, 75) * 1%);
+    color: var(--color-paper);
+    will-change: font-stretch;
+  }
+  .fin-word span.is-hot {
+    color: var(--color-heat);
+  }
+  .fin-bottom {
+    border-top: 1px solid var(--line);
+  }
+}
