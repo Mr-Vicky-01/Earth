@@ -11,7 +11,7 @@ const HEAT = '#ff4b1f'
 const BASE_SPEED = 7
 const REST_Z = 7.6
 const FAR_Z = 18
-const Z_NEAR = 6
+const Z_NEAR = 5.5
 const Z_FAR = -45
 const Z_SPAN = Z_NEAR - Z_FAR
 
@@ -71,12 +71,13 @@ function Streaks({ count, motion, reduced }) {
     [geo, mat],
   )
 
-  useFrame((_, delta) => {
+  useFrame(({ camera }, delta) => {
     const m = mesh.current
     if (!m) return
     const dt = Math.min(delta, 1 / 20)
     const speed = reduced ? 0 : BASE_SPEED * motion.warp
     const len = reduced ? 0.7 : 0.35 + speed * 0.05
+    const camZ = camera.position.z
     const arr = m.instanceMatrix.array
     for (let i = 0; i < count; i++) {
       const k = i * 6
@@ -84,7 +85,9 @@ function Streaks({ count, motion, reduced }) {
       if (z > Z_NEAR) z -= Z_SPAN
       data[k + 2] = z
       const o = i * 16
-      const t = data[k + 3]
+      // thinner as they pass the lens, so near streaks stay light trails instead of planks
+      const near = (camZ - z) / 11
+      const t = data[k + 3] * (near < 0.3 ? 0.3 : near > 1.4 ? 1.4 : near)
       arr[o] = t
       arr[o + 5] = t
       arr[o + 10] = len * data[k + 4]
@@ -158,13 +161,13 @@ function Kettlebell({ motion, reduced }) {
     L.y = damp(L.y, reduced ? 0 : motion.py, 3.2, dt)
 
     // camera: dolly in from warp, roll settles, FOV kicks with speed
-    const z = FAR_Z + (REST_Z - FAR_Z) * intro - exit * 2.6
+    const z = FAR_Z + (REST_Z - FAR_Z) * intro - exit * 1.2
     camera.position.set(L.x * 0.35, 0.72 - L.y * 0.22, z)
     camera.lookAt(0, 0.05 * exit, 0)
     camera.rotateZ((1 - intro) * 0.32)
-    camera.fov = 34 + energy * 5 + (1 - intro) * 12 + exit * 12 + scroll.abs * 4
+    camera.fov = Math.min(54, 34 + energy * 5 + (1 - intro) * 12 + exit * 12 + scroll.abs * 4)
     // composition: push the subject right (desktop) or up (phone) without changing perspective
-    const fx = portrait ? 0 : 0.19
+    const fx = portrait ? 0 : 0.175
     const fy = portrait ? 0.152 : 0.085
     camera.setViewOffset(size.width, size.height, -fx * size.width, fy * size.height, size.width, size.height)
 
@@ -176,7 +179,8 @@ function Kettlebell({ motion, reduced }) {
       const s = portrait ? clamp(aspect * 1.3, 0.56, 0.9) : 0.84
       g.scale.setScalar(s)
       const bob = reduced ? 0 : Math.sin(t * 1.15) * 0.06
-      g.position.set(0, bob + exit * 3.4, 0)
+      // scroll exit: rises, tips away and shoots off down the tunnel
+      g.position.set(0, bob + exit * 1.6, -exit * exit * 12)
       g.rotation.set(0.1 + L.y * 0.12 + exit * 0.5, 0, -0.13 - L.x * 0.14)
       sp.rotation.set(motion.tilt + exit * 0.9, motion.angle + exit * Math.PI * 1.4, 0)
     }
@@ -240,8 +244,9 @@ function Post({ motion, reduced, lite }) {
     if (!fx) return
     const o = reduced
       ? 0.0005
-      : 0.0005 + motion.energy * 0.006 + scroll.abs * 0.004 + (1 - motion.intro) * 0.006 + motion.exit * 0.0025
-    fx.offset.set(o, o * 0.35)
+      : 0.0005 + motion.energy * 0.006 + scroll.abs * 0.004 + (1 - motion.intro) * 0.005 + motion.exit * 0.0015
+    const c = Math.min(o, 0.006)
+    fx.offset.set(c, c * 0.35)
   })
   return (
     <EffectComposer multisampling={lite ? 2 : 4}>

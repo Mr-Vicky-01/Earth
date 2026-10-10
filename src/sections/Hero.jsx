@@ -16,6 +16,7 @@ const IDLE_OMEGA = 0.5 // rad/s
 const INTRO_TURNS = 3 // full turns the bell spins through while dropping out of warp
 const RPM_HOT = 120
 const WARP_HOT = 3
+const WARP_MAX = 16
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v)
 
@@ -136,22 +137,25 @@ export function Hero({ ready }) {
 
     const pushSample = (t, x) => {
       samples.push(t, x)
-      while (samples.length > 2 && t - samples[0] > 120) samples.splice(0, 2)
+      while (samples.length > 2 && t - samples[0] > 240) samples.splice(0, 2)
     }
-    const flingOmega = (now) => {
-      // angular velocity from the last ~80 ms of pointer travel
-      let i = samples.length - 2
-      if (i < 0 || now - samples[i] > 80) return 0
+    const flingOmega = (upT) => {
+      // angular velocity from the last ~80 ms of pointer travel (0 if the pointer was held still)
+      const i = samples.length - 2
+      if (i < 2 || upT - samples[i] > 100) return 0
       let j = i
       while (j - 2 >= 0 && samples[i] - samples[j - 2] <= 80) j -= 2
+      if (j === i) j = i - 2 // sparse events (slow frame): use the previous sample
       const dtMs = samples[i] - samples[j]
-      if (dtMs < 8) return m.omega
+      if (dtMs < 4 || dtMs > 220) return 0
       return ((samples[i + 1] - samples[j + 1]) / dtMs) * 1000 * k
     }
-    const engage = () => {
+    const engage = (capture) => {
       engaged = true
       m.dragging = true
       el.classList.add('is-dragging')
+      // touch is implicitly captured by the section already; re-capturing would fire lost/got capture
+      if (!capture) return
       try {
         el.setPointerCapture(id)
       } catch {
@@ -182,7 +186,7 @@ export function Hero({ ready }) {
       k = touch ? 0.017 : 0.0085
       if (!touch) {
         e.preventDefault() // no text selection while flinging
-        engage()
+        engage(true)
       } else {
         engaged = false
       }
@@ -193,7 +197,7 @@ export function Hero({ ready }) {
         // touch: only clearly horizontal gestures spin; vertical ones belong to the page
         const tx = e.clientX - sx
         const ty = e.clientY - sy
-        if (Math.abs(tx) > 8 && Math.abs(tx) > Math.abs(ty) * 1.3) engage()
+        if (Math.abs(tx) > 8 && Math.abs(tx) > Math.abs(ty) * 1.3) engage(false)
         else if (Math.abs(ty) > 10) id = null
         if (!engaged) return
       }
@@ -207,16 +211,26 @@ export function Hero({ ready }) {
       m.tiltTarget = clamp((e.clientY - sy) * 0.0032, -0.42, 0.42)
       lx = e.clientX
       lt = now
-      pushSample(now, e.clientX)
+      const co = e.getCoalescedEvents?.()
+      if (co && co.length > 1) for (const c of co) pushSample(stamp(c), c.clientX)
+      else pushSample(now, e.clientX)
     }
     const onUp = (e) => end(e, true)
     const onCancel = (e) => end(e, false)
+    const onBlur = () => {
+      if (id === null) return
+      m.dragging = false
+      m.tiltTarget = 0
+      engaged = false
+      id = null
+      el.classList.remove('is-dragging')
+    }
 
     el.addEventListener('pointerdown', onDown)
     el.addEventListener('pointermove', onMove)
     el.addEventListener('pointerup', onUp)
     el.addEventListener('pointercancel', onCancel)
-    el.addEventListener('lostpointercapture', onCancel)
+    window.addEventListener('blur', onBlur)
 
     // lean toward the pointer (desktop only)
     let onLean = null
@@ -232,7 +246,7 @@ export function Hero({ ready }) {
       el.removeEventListener('pointermove', onMove)
       el.removeEventListener('pointerup', onUp)
       el.removeEventListener('pointercancel', onCancel)
-      el.removeEventListener('lostpointercapture', onCancel)
+      window.removeEventListener('blur', onBlur)
       if (onLean) window.removeEventListener('pointermove', onLean)
       el.classList.remove('is-dragging')
       m.dragging = false
@@ -269,7 +283,7 @@ export function Hero({ ready }) {
     m.rpm += (shown * (60 / (2 * Math.PI)) - m.rpm) * 0.25
 
     m.energy = Math.min(1, Math.abs(m.omega) / 30)
-    m.warp = (1 + scroll.abs * 8 + m.energy * 6 + m.exit * 6) * (1 + 11 * (1 - m.intro))
+    m.warp = Math.min(WARP_MAX, (1 + scroll.abs * 8 + m.energy * 6 + m.exit * 6) * (1 + 11 * (1 - m.intro)))
 
     // meters every frame (transform only)
     const eSpin = Math.min(1, m.rpm / 430)
@@ -347,7 +361,10 @@ export function Hero({ ready }) {
               </span>
             </div>
             <div className="hero-hud-row hero-hud-hint" data-pull>
-              <span className="hero-hud-k">Drag to spin</span>
+              <span className="hero-hud-k">
+                <span className="hero-hint-idle">Drag to spin</span>
+                <span className="hero-hint-drag">Let go to fling</span>
+              </span>
               <span className="hero-nudge">
                 <ArrowRight />
               </span>

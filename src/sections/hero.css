@@ -52,7 +52,7 @@
 
   /* ---------- live HUD ---------- */
   .hero-hud {
-    width: 15.5rem;
+    width: 14.5rem;
     border-top: 1px solid var(--line);
   }
   .hero-hud-row {
@@ -117,6 +117,16 @@
   }
   .hero-hud-hint .hero-hud-k {
     color: var(--fg);
+  }
+  .hero-hint-drag {
+    display: none;
+    color: var(--color-heat);
+  }
+  .hero.is-dragging .hero-hint-idle {
+    display: none;
+  }
+  .hero.is-dragging .hero-hint-drag {
+    display: inline;
   }
   .hero-nudge {
     display: inline-flex;
@@ -194,8 +204,9 @@
   .hero-cue-lines {
     position: relative;
     display: inline-flex;
-    gap: 5px;
-    height: 3.6rem;
+    align-items: flex-start;
+    gap: 6px;
+    height: 4.4rem;
     transform: skewX(var(--slant));
   }
   .hero-cue-lines i {
@@ -204,7 +215,15 @@
     width: 2px;
     height: 100%;
     overflow: hidden;
-    background: var(--line);
+    background: linear-gradient(var(--line), var(--line)) 50% 0 / 1px 100% no-repeat;
+  }
+  .hero-cue-lines i:nth-child(2) {
+    height: 78%;
+    margin-top: 12%;
+  }
+  .hero-cue-lines i:nth-child(3) {
+    height: 56%;
+    margin-top: 26%;
   }
   .hero-cue-lines i::after {
     content: "";
@@ -212,27 +231,31 @@
     left: 0;
     right: 0;
     top: 0;
-    height: 55%;
-    background: linear-gradient(to bottom, transparent, var(--fg));
-    transform: translateY(-110%);
-    animation: hero-streak 0.95s cubic-bezier(0.55, 0, 0.2, 1) infinite;
+    height: 70%;
+    background: linear-gradient(to bottom, transparent, var(--fg) 85%);
+    transform: translateY(-105%);
+    animation: hero-streak 0.9s cubic-bezier(0.6, 0, 0.2, 1) infinite;
   }
   .hero-cue-lines i:nth-child(2)::after {
-    animation-duration: 0.72s;
-    animation-delay: 0.18s;
-    background: linear-gradient(to bottom, transparent, var(--color-heat));
+    animation-duration: 0.9s;
+    animation-delay: 0.12s;
+    background: linear-gradient(to bottom, transparent, var(--color-heat) 85%);
   }
   .hero-cue-lines i:nth-child(3)::after {
-    animation-duration: 1.15s;
-    animation-delay: 0.4s;
+    animation-duration: 0.9s;
+    animation-delay: 0.24s;
   }
   .hero-cue:hover .hero-cue-lines i::after,
   .hero-cue:focus-visible .hero-cue-lines i::after {
-    animation-duration: 0.4s;
+    animation-duration: 0.45s;
   }
   @keyframes hero-streak {
-    to {
-      transform: translateY(200%);
+    0% {
+      transform: translateY(-105%);
+    }
+    70%,
+    100% {
+      transform: translateY(150%);
     }
   }
 

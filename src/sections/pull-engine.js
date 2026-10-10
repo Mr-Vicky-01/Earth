@@ -83,8 +83,9 @@ export function createPullEngine(el, hooks = {}) {
     const W = el.track.clientWidth
     const H = el.track.clientHeight
     if (!W || !H) return
-    const small = W < 640
-    const sl = small ? 0 : H * SLANT
+    const small = H < 260
+    // the track's slanted ends (CSS --sl, 0 on phones): keep the sled and handle inside them
+    const sl = Math.min(H * SLANT, parseFloat(getComputedStyle(el.track).getPropertyValue('--sl')) || 0)
     g.W = W
     g.H = H
     g.cy = H / 2
@@ -422,7 +423,9 @@ export function createPullEngine(el, hooks = {}) {
     const reach = Math.max(st.maxS, sim.s)
     el.prog.style.transform = `scaleX(${r4(reach / TRACK_M)})`
     el.trail.style.transform = `scaleX(${r4(sim.s / TRACK_M)})`
-    el.meterFill.style.clipPath = `inset(0 ${r2(100 - (v / MAX_V) * 100)}% 0 0)`
+    const fill = r2(100 - (v / MAX_V) * 100)
+    el.meterFill.style.transform = `translate3d(${-fill}%,0,0)`
+    el.meterIn.style.transform = `translate3d(${fill}%,0,0)`
     el.meterPeak.style.transform = `translate3d(${r2((st.peak / MAX_V) * 100)}%,0,0)`
 
     const live = v > 0.03
@@ -441,9 +444,9 @@ export function createPullEngine(el, hooks = {}) {
       el.flag.classList.toggle('is-on', flagOn)
     }
 
-    // the word FASTER stretches with the sled
+    // the word FASTER stretches with the sled (quantised: re-shaping big type is not free)
     if (el.faster && !reduced) {
-      const w = v > 0.05 ? Math.round(75 + Math.min(1, v / 7) * 45) : 0
+      const w = v > 0.05 ? 75 + Math.round(Math.min(1, v / 7) * 15) * 3 : 0
       if (w !== st.fasterW) {
         st.fasterW = w
         el.faster.style.fontStretch = w ? `${w}%` : ''
