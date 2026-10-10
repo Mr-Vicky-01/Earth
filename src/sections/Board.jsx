@@ -9,7 +9,7 @@ import { SpeedButton } from '../ui/SpeedButton'
 import { Odometer } from '../ui/Odometer'
 import { Reveal } from '../ui/Reveal'
 import { useScramble } from '../ui/Scramble'
-import { createFlapEngine, BLANK, POOL_DIGIT } from './brd-flap'
+import { createFlapEngine, BLANK, POOL_DIGIT, POOL_TEXT, DRUM_DIGIT } from './brd-flap'
 import './board.css'
 
 const ROWS = [
@@ -23,13 +23,15 @@ const ROWS = [
 ]
 
 // fixed cell count per column so every column lines up like real hardware
+// (TIME's colon is a printed half-width separator, not a flap: w is the width in cells)
 const COLS = [
-  { key: 'time', label: 'Time', n: 5 },
+  { key: 'time', label: 'Time', n: 5, w: 4.5 },
   { key: 'session', label: 'Session', n: 13 },
   { key: 'coach', label: 'Coach', n: 11 },
   { key: 'target', label: 'Target', n: 13 },
   { key: 'spots', label: 'Spots', n: 4 },
 ]
+const SEP = { col: 'time', k: 2 }
 
 const SESSION_LEN = 60 // minutes a class runs
 const DAY_FROM = 5 * 60 + 30 // the day rail runs 05:30 → 21:30
@@ -39,7 +41,15 @@ const toMin = (t) => {
   return h * 60 + m
 }
 const fit = (s, n) => Array.from(String(s).padEnd(n, ' ').slice(0, n))
-const spotsText = (v) => (v <= 0 ? 'FULL' : String(v))
+// SPOTS reads like a departures board: counts right-aligned, words (FULL / DONE / LIVE) fill the field
+const spotsWord = (v, s) => (s === 'past' ? 'DONE' : s === 'now' ? 'LIVE' : v <= 0 ? 'FULL' : String(v))
+const isNum = (w) => /^\d+$/.test(w)
+const spotsChars = (v, s) => {
+  const w = spotsWord(v, s)
+  return Array.from(isNum(w) ? w.padStart(4, BLANK) : w.padEnd(4, BLANK).slice(0, 4))
+}
+const spotsSr = (v, s) => (s === 'past' ? 'Finished' : s === 'now' ? 'On now' : v <= 0 ? 'Full' : `${v} open`)
+const minsOf = (d) => d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60
 const nice = (s) => s.toLowerCase().replace(/(^|\s)([a-z])/g, (_, a, b) => a + b.toUpperCase())
 const two = (n) => String(n).padStart(2, '0')
 const hms = (ms) => {
@@ -52,30 +62,39 @@ const hms = (ms) => {
 const clockText = (d) => two(d.getHours()) + two(d.getMinutes()) + two(d.getSeconds())
 const dayPos = (mins) => Math.min(1, Math.max(0, (mins - DAY_FROM) / (DAY_TO - DAY_FROM)))
 
-/** where the day stands: which row is next, which is running, which are done */
+/**
+ * Where the day stands. Each row is first placed against the clock (still to start / running / finished),
+ * then labelled: 'next' (first class still to start), 'now' (running), 'past', 'tomorrow', or '' (later today).
+ * Once nothing is left to start, tomorrow's first class is next up; while the last class still runs it keeps
+ * ON NOW and the finished rows stay DONE. Only when nothing runs does the whole board turn over to tomorrow.
+ */
 function dayState(d) {
-  const mins = d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60
-  let next = ROWS.findIndex((r) => toMin(r.time) > mins)
-  const tomorrow = next === -1
-  if (tomorrow) next = 0
-  const st = ROWS.map((r, i) => {
+  const mins = minsOf(d)
+  const phase = ROWS.map((r) => {
     const m = toMin(r.time)
-    if (i === next) return tomorrow ? 'tomorrow' : 'next'
-    if (tomorrow) return ''
-    if (m <= mins && mins < m + SESSION_LEN) return 'now'
-    if (m + SESSION_LEN <= mins) return 'past'
-    return ''
+    return mins < m ? 'up' : mins < m + SESSION_LEN ? 'now' : 'past'
   })
-  return { next, tomorrow, st }
+  const running = phase.includes('now')
+  const first = phase.indexOf('up')
+  const tomorrow = first === -1 // the next class to start is tomorrow's first one
+  const over = tomorrow && !running // nothing left today at all: the board shows tomorrow
+  const st = phase.map((p, i) => {
+    if (over) return i === 0 ? 'tomorrow' : ''
+    if (p === 'now') return 'now'
+    if (tomorrow && i === 0) return 'tomorrow'
+    if (p === 'past') return 'past'
+    return i === first ? 'next' : ''
+  })
+  return { mins, next: tomorrow ? 0 : first, tomorrow, over, st }
 }
-// rows you can still book: everything from the next class on (the whole list once the day is over)
-const bookable = (i, day) => day.tomorrow || i >= day.next
-const openSpots = (spots, day) => spots.reduce((sum, v, i) => sum + (bookable(i, day) ? v : 0), 0)
+// you can book anything that hasn't started: never a running or finished class
+const canBook = (s) => s !== 'now' && s !== 'past'
+const openSpots = (spots, day) => spots.reduce((sum, v, i) => sum + (canBook(day.st[i]) ? v : 0), 0)
 
-function Cell({ k }) {
+function Cell({ k, sep }) {
   return (
-    <span className={k ? 'brd-c brd-c--k' : 'brd-c'}>
-      <span className="brd-g">{BLANK}</span>
+    <span className={k ? 'brd-c brd-c--k' : sep ? 'brd-c brd-c--sep' : 'brd-c'}>
+      <span className="brd-g">{sep ? ':' : BLANK}</span>
       <span className="brd-l">{BLANK}</span>
       <span className="brd-fu">{BLANK}</span>
       <span className="brd-fl">{BLANK}</span>
@@ -88,6 +107,7 @@ const Rows = memo(function Rows() {
   return ROWS.map((r, i) => (
     <div key={i} className="brd-row" role="row" data-i={i}>
       <span className="brd-flash" aria-hidden="true" />
+      <span className="brd-prog" aria-hidden="true" />
       <span className="brd-mk" role="cell">
         <span className="brd-tag brd-tag--next">Next</span>
         <span className="brd-tag brd-tag--now">
@@ -98,10 +118,10 @@ const Rows = memo(function Rows() {
       </span>
       {COLS.map((c) => (
         <span key={c.key} role="cell" className={`brd-col brd-col--${c.key}`}>
-          <span className="sr-only">{c.key === 'spots' ? spotsText(r.spots) : r[c.key]}</span>
+          <span className="sr-only">{c.key === 'spots' ? spotsSr(r.spots, '') : r[c.key]}</span>
           <span className="brd-cells" aria-hidden="true">
             {Array.from({ length: c.n }, (_, k) => (
-              <Cell key={k} />
+              <Cell key={k} sep={c.key === SEP.col && k === SEP.k} />
             ))}
           </span>
         </span>
@@ -154,22 +174,34 @@ export function Board() {
       const engine = createFlapEngine({ reduced })
       const unit = root.querySelector('.brd-unit')
       const scroller = root.querySelector('.brd-scroll')
+      const table = root.querySelector('.brd-table')
       const nextEl = root.querySelector('.brd-next')
       const lastEl = root.querySelector('.brd-last')
+      const srTime = root.querySelector('.brd-srtime')
       const railFill = root.querySelector('.brd-rail-fill')
       const railHead = root.querySelector('.brd-rail-head')
       const railNow = root.querySelector('.brd-rail-now')
+      const railNext = root.querySelector('.brd-rail-next')
       const railTicks = Array.from(root.querySelectorAll('.brd-rail-tick'))
+      const bindCol = (el, key) =>
+        Array.from(el.querySelectorAll(`.brd-col--${key} .brd-c`)).map((cel) => {
+          const c = engine.bind(cel)
+          c.fixed = cel.classList.contains('brd-c--sep')
+          return c
+        })
       const rows = Array.from(root.querySelectorAll('.brd-row[data-i]')).map((el, i) => ({
         el,
         i,
         data: ROWS[i],
         flash: el.querySelector('.brd-flash'),
+        prog: el.querySelector('.brd-prog'),
         sr: el.querySelector('.brd-col--spots .sr-only'),
-        cols: Object.fromEntries(COLS.map((c) => [c.key, Array.from(el.querySelectorAll(`.brd-col--${c.key} .brd-c`)).map(engine.bind)])),
+        cols: Object.fromEntries(COLS.map((c) => [c.key, bindCol(el, c.key)])),
         st: null,
+        p: -1,
         v: 0,
         q: 0,
+        wc: false,
         hoverAt: -1e9,
       }))
       const clock = Array.from(root.querySelectorAll('.brd-clock .brd-c')).map(engine.bind)
@@ -180,13 +212,17 @@ export function Board() {
         reduced,
         spots: ROWS.map((r) => r.spots),
         day: dayState(new Date()),
+        open: -1,
+        filled: false, // every cell has been sent its value (intro started, or snapped)
         clockOn: false,
         shown: '',
         introDone: false,
         nextBooking: Infinity,
         sinceSeed: 0,
         last: null,
+        lastText: '',
         lastSec: -1,
+        lastMin: -1,
         rattle: 0,
         railOn: false,
         railPos: -1,
@@ -194,13 +230,67 @@ export function Board() {
       api.current = st
 
       const targetHidden = () => getComputedStyle(rows[0].el.querySelector('.brd-col--target')).display === 'none'
-      const rowChars = (r, key, n) => fit(key === 'spots' ? spotsText(st.spots[r.i]) : r.data[key], n)
+      const rowChars = (r, key, n) => (key === 'spots' ? spotsChars(st.spots[r.i], r.st) : fit(r.data[key], n))
+      const syncOpen = () => {
+        const v = openSpots(st.spots, st.day)
+        if (v !== st.open) {
+          st.open = v
+          setOpen(v)
+        }
+      }
 
-      /* ---------- markers: NEXT / ON NOW / TOMORROW / past ---------- */
+      /* ---------- bezel readout: written the moment something happens, and every second for the "ago" ---------- */
+      const writeLast = () => {
+        const l = st.last
+        let t = 'Watching for bookings'
+        if (l?.sync) t = 'Board synced with the app'
+        else if (l) {
+          const s = Math.max(0, Math.round((Date.now() - l.at) / 1000))
+          t = `Booked · ${nice(l.row.session)} ${l.row.time} · ${s < 60 ? `${s} s` : `${Math.floor(s / 60)} min`} ago`
+        }
+        if (t !== st.lastText) {
+          st.lastText = t
+          lastEl.textContent = t
+        }
+      }
+
+      /* ---------- spots: flap only the modules that change; digits turn forward round the drum ---------- */
+      // one reusable flash per row: heat sweeps in behind the tiles, then drains away
+      rows.forEach((r) => {
+        r.tl = gsap
+          .timeline({ paused: true, onComplete: () => r.el.classList.remove('is-hot') })
+          .fromTo(r.flash, { scaleX: 0, opacity: 1 }, { scaleX: 1, duration: 0.32, ease: 'expo.out', immediateRender: false })
+          .to(r.flash, { opacity: 0, duration: 0.9, ease: 'power2.in' }, 0.45)
+      })
+
+      const markSpots = (r) => {
+        const v = st.spots[r.i]
+        r.el.classList.toggle('is-full', v === 0 && canBook(r.st))
+        r.sr.textContent = spotsSr(v, r.st)
+      }
+      const writeSpots = (r, flash, delay = 0) => {
+        const chars = spotsChars(st.spots[r.i], r.st)
+        const digits = chars.every((ch) => DRUM_DIGIT.includes(ch))
+        let j = 0
+        r.cols.spots.forEach((c, k) => {
+          const ch = chars[k]
+          if (engine.busy(c)) return engine.retarget(c, ch)
+          if (c.cur === ch) return
+          const word = { flips: 5 + j * 2 + ((Math.random() * 3) | 0), pool: POOL_TEXT }
+          engine.flap(c, ch, { ...(digits ? { drum: DRUM_DIGIT, ...word, pool: POOL_DIGIT } : word), dur: 40, lastDur: 110, delay: delay + j * 45 })
+          j += 1
+        })
+        markSpots(r)
+        if (!flash || reduced) return
+        r.el.classList.add('is-hot')
+        r.tl.restart()
+      }
+
+      /* ---------- markers: NEXT / ON NOW / TOMORROW / past, DONE + LIVE roll-overs, the day rail ---------- */
       st.status = contextSafe((d, animate) => {
         const day = dayState(d)
-        const changed = day.next !== st.day.next || day.tomorrow !== st.day.tomorrow
         st.day = day
+        let delay = 0
         rows.forEach((r) => {
           const s = day.st[r.i]
           if (r.st === s) return
@@ -210,54 +300,54 @@ export function Board() {
           if (animate && tag && !reduced) {
             gsap.fromTo(tag, { xPercent: -140, skewX: -30, scaleX: 1.6, opacity: 0 }, { xPercent: 0, skewX: 0, scaleX: 1, opacity: 1, duration: 0.6, ease: 'expo.out', overwrite: true })
           }
+          // a class that starts flaps its SPOTS to LIVE, one that ends to DONE; the board turning over to
+          // tomorrow flaps every row back to its count
+          if (st.filled) {
+            writeSpots(r, false, delay)
+            delay += 90
+          } else markSpots(r)
         })
-        if (changed) setOpen(openSpots(st.spots, day))
-        // day rail: fill and playhead at the current minute (whole rail is a fresh day once it is over)
-        const mins = d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60
-        const pos = day.tomorrow ? 1 : dayPos(mins)
+        syncOpen()
+        // ON NOW: a heat line under the row fills with the minutes gone
+        rows.forEach((r) => {
+          if (r.st !== 'now') return
+          const p = Math.round(Math.min(1, Math.max(0, (day.mins - toMin(r.data.time)) / SESSION_LEN)) * 400) / 400
+          if (p !== r.p) {
+            r.p = p
+            r.prog.style.transform = `scaleX(${p})`
+          }
+        })
+        // day rail: playhead and lit ticks always follow the real clock
+        const pos = dayPos(day.mins)
         if (st.railOn && pos !== st.railPos) {
           st.railPos = pos
           railFill.style.transform = `scaleX(${pos})`
           railHead.style.left = `${pos * 100}%`
         }
-        railHead.classList.toggle('is-end', pos > 0.82)
-        railNow.textContent = `Now ${two(d.getHours())}:${two(d.getMinutes())}`
-        railTicks.forEach((t, i) => t.classList.toggle('is-past', !day.tomorrow && toMin(ROWS[i].time) <= mins))
+        railHead.classList.toggle('is-end', pos > 0.8)
+        const hm = `${two(d.getHours())}:${two(d.getMinutes())}`
+        railNow.textContent = `Now ${hm}`
+        railTicks.forEach((t, i) => {
+          t.classList.toggle('is-past', toMin(ROWS[i].time) <= day.mins)
+          t.classList.toggle('is-next', i === day.next)
+        })
+        const nx = ROWS[day.next]
+        const np = dayPos(toMin(nx.time))
+        railNext.textContent = `${day.tomorrow ? 'Tmrw' : 'Next'} ${nx.time}`
+        railNext.style.left = `${np * 100}%`
+        railNext.dataset.side = np < 0.12 ? 'l' : np > 0.88 ? 'r' : 'c'
+        if (d.getMinutes() !== st.lastMin) {
+          st.lastMin = d.getMinutes()
+          srTime.textContent = ` ${hm}`
+        }
         // countdown to the next class
-        const r = ROWS[day.next]
-        const m = toMin(r.time)
+        const m = toMin(nx.time)
         const at = new Date(d)
         at.setHours(Math.floor(m / 60), m % 60, 0, 0)
         if (day.tomorrow) at.setDate(at.getDate() + 1)
-        nextEl.textContent = `${nice(r.session)} ${day.tomorrow ? 'tomorrow ' : ''}${r.time} · in ${hms(at - d)}`
-        lastEl.textContent = st.last
-          ? st.last.sync
-            ? 'Board synced with the app'
-            : `Last booking · ${nice(st.last.row.session)} ${st.last.row.time} · ${Math.max(0, Math.round((Date.now() - st.last.at) / 1000))} s ago`
-          : 'Watching for bookings'
+        nextEl.textContent = `${nice(nx.session)} ${day.tomorrow ? 'tomorrow ' : ''}${nx.time} · in ${hms(at - d)}`
+        writeLast()
       })
-
-      /* ---------- spots: flap the value, flash the row ---------- */
-      // one reusable flash per row: heat sweeps in behind the tiles, then drains away
-      rows.forEach((r) => {
-        r.tl = gsap
-          .timeline({ paused: true, onComplete: () => r.el.classList.remove('is-hot') })
-          .fromTo(r.flash, { scaleX: 0, opacity: 1 }, { scaleX: 1, duration: 0.32, ease: 'expo.out', immediateRender: false })
-          .to(r.flash, { opacity: 0, duration: 0.9, ease: 'power2.in' }, 0.45)
-      })
-
-      const writeSpots = (r, flash, delay = 0) => {
-        const v = st.spots[r.i]
-        const chars = rowChars(r, 'spots', 4)
-        r.cols.spots.forEach((c, k) =>
-          engine.flap(c, chars[k], { flips: 4 + k * 2 + ((Math.random() * 3) | 0), dur: 42, lastDur: 110, delay: delay + k * 45 }),
-        )
-        r.el.classList.toggle('is-full', v === 0)
-        r.sr.textContent = spotsText(v)
-        if (!flash || reduced) return
-        r.el.classList.add('is-hot')
-        r.tl.restart()
-      }
 
       const reseed = () => {
         let d = 0
@@ -269,11 +359,12 @@ export function Board() {
         })
         st.sinceSeed = 0
         st.last = { sync: true }
-        setOpen(openSpots(st.spots, st.day))
+        syncOpen()
+        writeLast()
       }
 
       st.book = () => {
-        const cands = rows.filter((r) => bookable(r.i, st.day) && st.spots[r.i] > 0)
+        const cands = rows.filter((r) => canBook(r.st) && st.spots[r.i] > 0)
         const n = cands.length
         if (st.sinceSeed >= 8 || n === 0 || (n === 1 && st.spots[cands[0].i] <= 2)) return reseed()
         const r = cands[(Math.random() * n) | 0]
@@ -281,7 +372,8 @@ export function Board() {
         writeSpots(r, true)
         st.sinceSeed += 1
         st.last = { row: r.data, at: Date.now() }
-        setOpen(openSpots(st.spots, st.day))
+        syncOpen()
+        writeLast()
       }
 
       /* ---------- clock ---------- */
@@ -320,8 +412,7 @@ export function Board() {
           { x: -160, skewX: 18, opacity: 0 },
           { x: 0, skewX: 0, opacity: 1, duration: 0.7, stagger: 0.035, delay: 0.06, ease: 'expo.out', clearProps: 'transform,opacity' },
         )
-        const d = new Date()
-        const pos = st.day.tomorrow ? 1 : dayPos(d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60)
+        const pos = dayPos(minsOf(new Date()))
         st.railPos = pos
         gsap.fromTo(railFill, { scaleX: 0 }, { scaleX: pos, duration: 1.1, delay: 0.15, ease: 'expo.out', onComplete: () => (st.railOn = true) })
         gsap.fromTo(railHead, { left: '0%' }, { left: `${pos * 100}%`, duration: 1.1, delay: 0.15, ease: 'expo.out' })
@@ -343,7 +434,10 @@ export function Board() {
           let g = 0
           COLS.forEach((col) => {
             const chars = rowChars(r, col.key, col.n)
+            // times and counts sit on digit-only drums; names and targets on the full alphabet
+            const pool = col.key === 'time' || (col.key === 'spots' && chars.every((ch) => DRUM_DIGIT.includes(ch))) ? POOL_DIGIT : POOL_TEXT
             r.cols[col.key].forEach((c, k) => {
+              if (c.fixed) return
               if (col.key === 'target' && skipTarget) {
                 engine.snap(c, chars[k])
                 return
@@ -354,16 +448,17 @@ export function Board() {
                 dur: 35,
                 lastDur: 70,
                 delay: 140 + r.i * 80 + g * 10,
+                pool,
                 onLand: landed,
               })
               g += 1
             })
           })
         })
+        st.filled = true
       })
 
       st.status(new Date(), false)
-      rows.forEach((r) => r.el.classList.toggle('is-full', st.spots[r.i] === 0))
 
       if (reduced) {
         rows.forEach((r) => COLS.forEach((col) => r.cols[col.key].forEach((c, k) => engine.snap(c, rowChars(r, col.key, col.n)[k]))))
@@ -371,8 +466,10 @@ export function Board() {
         clock.forEach((c, k) => engine.snap(c, s[k]))
         st.shown = s
         st.clockOn = true
+        st.filled = true
         st.introDone = true
         st.railOn = true
+        st.railPos = -1
         st.nextBooking = 6000
         st.status(new Date(), false)
       } else {
@@ -399,20 +496,24 @@ export function Board() {
         })
       }
 
-      /* ---------- narrow screens: fade on the right edge while there is more board to see ---------- */
+      /* ---------- narrow screens: swipe hint + right-edge fade only when the board really overflows ---------- */
       const edge = () => {
-        const more = scroller.scrollWidth - scroller.clientWidth - scroller.scrollLeft > 4
+        const over = scroller.scrollWidth > scroller.clientWidth + 4
+        const more = over && scroller.scrollWidth - scroller.clientWidth - scroller.scrollLeft > 4
+        unit.toggleAttribute('data-overflow', over)
         unit.toggleAttribute('data-more', more)
         // only a tab stop when there is something to scroll to
-        if (scroller.scrollWidth > scroller.clientWidth + 4) scroller.setAttribute('tabindex', '0')
+        if (over) scroller.setAttribute('tabindex', '0')
         else scroller.removeAttribute('tabindex')
       }
       edge()
+      const ro = new ResizeObserver(edge)
+      ro.observe(scroller)
+      ro.observe(table)
       scroller.addEventListener('scroll', edge, { passive: true })
-      window.addEventListener('resize', edge)
       offs.push(() => {
+        ro.disconnect()
         scroller.removeEventListener('scroll', edge)
-        window.removeEventListener('resize', edge)
       })
 
       return () => {
@@ -453,6 +554,11 @@ export function Board() {
       if (q !== r.q) {
         r.q = q
         r.el.style.translate = q ? `${q}px 0` : ''
+        // own layer only while it moves, so the shear never repaints the tiles
+        if (!q !== !r.wc) {
+          r.wc = !!q
+          r.el.classList.toggle('is-shear', r.wc)
+        }
       }
     }
     // fast scrolling rattles loose flaps
@@ -463,7 +569,7 @@ export function Board() {
         const r = rows[(Math.random() * rows.length) | 0]
         const col = r.cols[COLS[(Math.random() * COLS.length) | 0].key]
         const c = col[(Math.random() * col.length) | 0]
-        if (!engine.busy(c)) engine.flap(c, c.cur, { dur: 70 })
+        if (!c.fixed && !engine.busy(c)) engine.flap(c, c.cur, { dur: 70 })
       }
     } else st.rattle = 0
   }, inView)
@@ -480,10 +586,12 @@ export function Board() {
           </Reveal>
           <SlamText className="d t-xl brd-title" lines={['On the floor', { text: 'today.', className: 'outline' }]} skew />
           <div className="brd-clockbox">
-            <span className="sr-only">Local time</span>
             <Clock />
             <div className="brd-clockmeta mono tnum">
-              <span className="mute">Local time</span>
+              <span className="mute">
+                Local time
+                <span className="sr-only brd-srtime" />
+              </span>
               <span className="brd-sep" aria-hidden="true" />
               <span className="brd-next accent" aria-live="off" />
             </div>
@@ -491,27 +599,28 @@ export function Board() {
         </header>
 
         <div className="brd-unit">
-          <div className="brd-bezel mono">
+          <div className="brd-bezel mono tnum">
             <span className="brd-bezel-l">
               <span className="speed-glyph" aria-hidden="true" />
               Floor board · {today}
-              <span className="brd-swipe mute" aria-hidden="true">
-                · swipe →
-              </span>
             </span>
-            <span className="brd-bezel-r tnum">
-              <span>
-                <span className="mute">Spots open </span>
-                <Odometer value={open} duration={0.9} className="brd-open" />
-              </span>
-              <span className="brd-last mute" />
+            <span className="brd-swipe mute" aria-hidden="true">
+              Swipe →
             </span>
+            <span className="brd-openbox">
+              <span className="mute">Spots open </span>
+              <Odometer value={open} duration={0.9} className="brd-open" />
+            </span>
+            <span className="brd-last mute">Watching for bookings</span>
           </div>
           <div className="brd-rail" aria-hidden="true">
             <span className="brd-rail-fill" />
             {ROWS.map((r, i) => (
               <span key={i} className="brd-rail-tick" style={{ left: `${dayPos(toMin(r.time)) * 100}%` }} />
             ))}
+            <span className="brd-rail-lbl brd-rail-lbl--from mono tnum">05:30</span>
+            <span className="brd-rail-lbl brd-rail-lbl--to mono tnum">21:30</span>
+            <span className="brd-rail-next mono tnum" />
             <span className="brd-rail-head">
               <span className="brd-rail-now mono tnum" />
             </span>
@@ -529,7 +638,7 @@ export function Board() {
                       role="columnheader"
                       className={`brd-hd brd-col--${c.key}`}
                       data-label={c.label}
-                      style={{ '--k': c.n }}
+                      style={{ '--k': c.w ?? c.n, '--kg': c.n - 1 }}
                     >
                       {c.label}
                     </span>
@@ -539,6 +648,20 @@ export function Board() {
               </div>
             </div>
             <span className="brd-fade" aria-hidden="true" />
+          </div>
+          <div className="brd-key mono" aria-hidden="true">
+            <span>
+              <i className="brd-key-sw brd-key-sw--next" />
+              Next
+            </span>
+            <span>
+              <i className="brd-key-sw brd-key-sw--now" />
+              On now
+            </span>
+            <span>
+              <i className="brd-key-sw brd-key-sw--past" />
+              Done
+            </span>
           </div>
         </div>
 

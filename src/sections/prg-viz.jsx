@@ -55,6 +55,7 @@ function useViz(hostRef, canvasRef, sim) {
     if (still) sim.prime()
     else if (!sim.warmed) {
       sim.warmed = true
+      sim.init?.()
       sim.warm(sim.warmup || 0)
     }
     const fit = () => {
@@ -103,20 +104,31 @@ const ROM = 0.55 // metres of bar travel
 const CUT = 0.2 // velocity-loss threshold
 const TRAIL = 2.3 // seconds of trail
 const BAR_MIN = 0.5 // bar chart axis floor (m/s)
+const RING = 512 // trail samples kept (ring buffer; ~4 s at 120 Hz)
+const IDLE = '–.––'
 
 function makeVelocity(r) {
   let still = reducedMotion()
-  const s = { t: 0, tau: 0, phase: 'down', rep: 0, p: 1, xo: 0, v: 0, jit: 0, pts: [], liveT: 0, best: REPS[0] }
+  const s = { t: 0, tau: 0, phase: 'down', rep: 0, p: 1, xo: 0, v: 0, jit: 0, liveT: 0, best: REPS[0] }
+  // trail ring buffer: p, xo, t, up per sample (no per-frame allocation)
+  const tr = { p: new Float32Array(RING), xo: new Float32Array(RING), t: new Float64Array(RING), up: new Uint8Array(RING), head: 0, n: 0 }
   const D = { down: 0.58, hold: 0.06, top: 0.26, cut: 2.4 }
-  // J-curve: forward at the bottom, hooks back early in the drive, then straight up
-  const xoUp = (p) => Math.pow(1 - p, 3) * (1 + s.jit)
-  const xoDown = (p) => Math.pow(1 - p, 1.45) * 0.86
+  // J-curve: bar drifts forward on the way down, then hooks back hard off the bottom and drives straight up
+  const xoUp = (p) => Math.pow(1 - p, 4.2) * (1 + s.jit)
+  const xoDown = (p) => Math.pow(1 - p, 1.35) * 0.9
 
-  const repStart = (i) => put(r.rep.current, `Rep ${i + 1}`)
+  // the headline always describes a finished rep: label and number change together when the concentric ends
+  const idle = () => {
+    put(r.rep.current, 'New set')
+    put(r.big.current, IDLE)
+    r.big.current?.classList.add('is-idle')
+  }
   const repDone = (i) => {
     const v = REPS[i]
     const loss = 1 - v / s.best
+    put(r.rep.current, `Rep ${i + 1}`)
     put(r.big.current, v.toFixed(2))
+    r.big.current?.classList.remove('is-idle')
     snap(r.big.current, still)
     put(r.loss.current, loss > 0.005 ? `−${Math.round(loss * 100)}%` : '0%')
     const fill = r.lossFill.current
@@ -131,7 +143,8 @@ function makeVelocity(r) {
       const h = clamp01((v - BAR_MIN) / (1 - BAR_MIN))
       const col = bar.firstChild
       bar.classList.toggle('is-hot', loss > CUT)
-      put(bar.lastChild, v.toFixed(2))
+      put(bar.children[1], v.toFixed(2))
+      put(bar.children[2], v.toFixed(2).slice(1))
       if (still) gsap.set(col, { scaleY: h })
       else gsap.fromTo(col, { scaleY: 0 }, { scaleY: h, duration: 0.55, ease: 'expo.out', overwrite: true })
     }
@@ -145,12 +158,13 @@ function makeVelocity(r) {
     r.alert.current?.classList.remove('is-on')
     r.lossBox.current?.classList.remove('is-hot')
     put(r.loss.current, '0%')
-    put(r.big.current, '0.00')
+    idle()
     const fill = r.lossFill.current
     const bars = r.bars.current ? Array.from(r.bars.current.querySelectorAll('.prg-bar')) : []
     bars.forEach((b) => {
       b.classList.remove('is-hot')
-      put(b.lastChild, '')
+      put(b.children[1], '')
+      put(b.children[2], '')
     })
     if (still) {
       if (fill) gsap.set(fill, { scaleX: 0 })
@@ -214,7 +228,6 @@ function makeVelocity(r) {
         if (s.tau >= D.top) {
           s.rep += 1
           s.jit = rand(-0.12, 0.12)
-          repStart(s.rep)
           go('down')
         }
       } else if (s.phase === 'cut') {
@@ -224,19 +237,26 @@ function makeVelocity(r) {
           reset()
           s.rep = 0
           s.jit = rand(-0.12, 0.12)
-          repStart(0)
           go('down')
         }
       }
-      s.pts.push({ p: s.p, xo: s.xo, t: s.t, up: s.phase === 'up' })
-      while (s.pts.length && s.t - s.pts[0].t > TRAIL) s.pts.shift()
+      const k = tr.head
+      tr.p[k] = s.p
+      tr.xo[k] = s.xo
+      tr.t[k] = s.t
+      tr.up[k] = s.phase === 'up' ? 1 : 0
+      tr.head = (k + 1) % RING
+      if (tr.n < RING) tr.n++
       if (s.t - s.liveT > 0.05) {
         s.liveT = s.t
         put(r.live.current, s.v.toFixed(2))
       }
     },
+    init() {
+      idle()
+    },
     prime() {
-      repStart(0)
+      idle()
       for (let i = 0; i < 2000 && s.phase !== 'cut'; i++) this.step(1 / 60)
       for (let i = 0; i < 20; i++) this.step(1 / 60)
     },
@@ -246,13 +266,13 @@ function makeVelocity(r) {
       const top = 30
       const bot = h - 30
       const span = bot - top
-      const A = Math.min(56, (w - padL) * 0.3)
+      const A = Math.min(92, (w - padL) * 0.4)
       const cx = padL + (w - padL) * 0.5
       const X = (xo) => cx - A * 0.5 + xo * A
       const Y = (p) => bot - p * span
 
       // depth scale, every 0.1 m
-      ctx.font = `500 9.5px ${MONO}`
+      ctx.font = `500 10.5px ${MONO}`
       ctx.textAlign = 'right'
       ctx.textBaseline = 'middle'
       for (let m = 0; m <= 0.5001; m += 0.1) {
@@ -281,27 +301,41 @@ function makeVelocity(r) {
       ctx.beginPath()
       for (let i = 0; i <= 30; i++) {
         const p = i / 30
-        const x = X(Math.pow(1 - p, 3))
+        const x = X(Math.pow(1 - p, 4.2))
         if (i) ctx.lineTo(x, Y(p))
         else ctx.moveTo(x, Y(p))
       }
       ctx.stroke()
       ctx.setLineDash([])
 
-      // fading trail
-      const pts = s.pts
+      // fading trail, batched: one path per (age bucket, drive/descent) run instead of one stroke per segment
       ctx.lineCap = 'round'
-      for (let i = 1; i < pts.length; i++) {
-        const a = 1 - (s.t - pts[i].t) / TRAIL
-        if (a <= 0) continue
-        ctx.globalAlpha = a * a
-        ctx.strokeStyle = PAPER
-        ctx.lineWidth = pts[i].up ? 3.2 : 1.6
-        ctx.beginPath()
-        ctx.moveTo(X(pts[i - 1].xo), Y(pts[i - 1].p))
-        ctx.lineTo(X(pts[i].xo), Y(pts[i].p))
-        ctx.stroke()
+      ctx.lineJoin = 'round'
+      ctx.strokeStyle = PAPER
+      const oldest = (tr.head - tr.n + RING) % RING
+      let key = -1
+      let open = false
+      for (let j = 1; j < tr.n; j++) {
+        const i0 = (oldest + j - 1) % RING
+        const i1 = (oldest + j) % RING
+        const age = s.t - tr.t[i1]
+        if (age > TRAIL) continue
+        const a = 1 - age / TRAIL
+        const bucket = Math.min(7, (a * 8) | 0)
+        const k2 = bucket * 2 + tr.up[i1]
+        if (k2 !== key) {
+          if (open) ctx.stroke()
+          key = k2
+          const ab = (bucket + 0.5) / 8
+          ctx.globalAlpha = ab * ab
+          ctx.lineWidth = tr.up[i1] ? 3.2 : 1.6
+          ctx.beginPath()
+          ctx.moveTo(X(tr.xo[i0]), Y(tr.p[i0]))
+          open = true
+        }
+        ctx.lineTo(X(tr.xo[i1]), Y(tr.p[i1]))
       }
+      if (open) ctx.stroke()
       ctx.globalAlpha = 1
 
       // the bar end (plate seen from the side) + velocity vector
@@ -368,11 +402,11 @@ export function VelocityViz() {
       <div className="prg-vl-read">
         <div className="prg-vl-hero">
           <p className="mono prg-k">
-            <span ref={r.rep}>Rep 1</span> · mean concentric
+            <span ref={r.rep}>New set</span> · mean concentric
           </p>
           <p className="prg-big d tnum">
-            <span ref={r.big} className="prg-big-n">
-              0.00
+            <span ref={r.big} className="prg-big-n is-idle">
+              {IDLE}
             </span>
             <small className="mono">m/s</small>
           </p>
@@ -405,7 +439,8 @@ export function VelocityViz() {
             {REPS.map((_, i) => (
               <div key={i} className="prg-bar">
                 <i />
-                <span className="mono tnum" />
+                <span className="mono tnum prg-bar-l" />
+                <span className="mono tnum prg-bar-s" />
               </div>
             ))}
             <span className="prg-bars-cut" style={{ bottom: `${((REPS[0] * (1 - CUT) - BAR_MIN) / (1 - BAR_MIN)) * 100}%` }} />
@@ -427,6 +462,9 @@ const SEGS = 24
 const W_MAX = 1200
 const ON = 8
 const OFF = 12
+const POW_WIN = 24 // seconds of power history on screen: one sprint + one easy block + the next surge
+const POW_HZ = 10
+const POW_N = 256
 const gauss = (x, mu, sig) => Math.exp(-((x - mu) * (x - mu)) / (2 * sig * sig))
 // one heartbeat in seconds since the beat started (QRS width stays fixed as heart rate climbs)
 const ecgShape = (tb) =>
@@ -444,7 +482,6 @@ function makeEngine(r) {
     bpm: 156,
     beats: [],
     nextBeat: 0.3,
-    pow: [],
     powT: 0,
     txtT: 0,
     lit: -1,
@@ -453,6 +490,9 @@ function makeEngine(r) {
     sessionPeak: 0,
     from: 310,
   }
+
+  // power history ring: [t, watts] pairs sampled at 10 Hz
+  const pw = { t: new Float64Array(POW_N), w: new Float32Array(POW_N), head: 0, n: 0 }
 
   const setPhase = (on) => {
     s.on = on
@@ -475,7 +515,7 @@ function makeEngine(r) {
       for (let i = 0; i < sec * 60; i++) this.step(1 / 60)
       still = was
     },
-    warmup: 5.5,
+    warmup: 41, // lands 1 s into a sprint with a full 24 s of power history behind it
     step(dt) {
       s.t += dt
       s.tau += dt
@@ -501,10 +541,12 @@ function makeEngine(r) {
         s.nextBeat += 60 / s.bpm
         if (!still && r.beat.current) gsap.fromTo(r.beat.current, { scale: 1.9, opacity: 1 }, { scale: 1, opacity: 0.35, duration: 0.32, ease: 'expo.out', overwrite: true })
       }
-      if (s.t - s.powT > 1 / 30) {
+      if (s.t - s.powT >= 1 / POW_HZ) {
         s.powT = s.t
-        s.pow.push(s.t, s.watts)
-        if (s.pow.length > 260) s.pow.splice(0, 2)
+        pw.t[pw.head] = s.t
+        pw.w[pw.head] = s.watts
+        pw.head = (pw.head + 1) % POW_N
+        if (pw.n < POW_N) pw.n++
       }
       // readouts ≤ 20/s
       if (s.t - s.txtT >= 0.05) {
@@ -532,29 +574,29 @@ function makeEngine(r) {
     },
     prime() {
       setPhase(true)
-      for (let i = 0; i < 60 * 10.5; i++) this.step(1 / 60)
-      setPhase(true)
-      for (let i = 0; i < 60 * 2.2; i++) this.step(1 / 60)
+      for (let i = 0; i < 60 * 42.2; i++) this.step(1 / 60)
     },
     draw(ctx, w, h) {
       ctx.clearRect(0, 0, w, h)
       const win = w < 420 ? 2.6 : 3.4
       const pxs = w / win
       const now = s.t
-      // scrolling monitor grid
-      ctx.fillStyle = 'rgba(10,10,16,0.1)'
+      const p0 = h * 0.62
+      const p1 = h * 0.97
+      const band = Math.round(p0 - 22) // top of the power strip
+      // scrolling monitor grid (ECG strip: 0.2 s minor / 1 s major)
       const g0 = Math.floor(now / 0.2) * 0.2
       for (let tt = g0, k = Math.round(g0 / 0.2); tt > now - win - 0.2; tt -= 0.2, k--) {
         const x = Math.round(w - (now - tt) * pxs)
         ctx.fillStyle = k % 5 === 0 ? 'rgba(10,10,16,0.2)' : 'rgba(10,10,16,0.08)'
-        ctx.fillRect(x, 0, 1, h)
+        ctx.fillRect(x, 0, 1, band)
       }
       ctx.fillStyle = 'rgba(10,10,16,0.08)'
-      for (let i = 1; i < 6; i++) ctx.fillRect(0, Math.round((h * i) / 6), w, 1)
+      for (let i = 1; i < 4; i++) ctx.fillRect(0, Math.round((band * i) / 4), w, 1)
 
       // ECG channel
       const e0 = h * 0.1
-      const e1 = h * 0.6
+      const e1 = h * 0.54
       const base = e0 + (e1 - e0) * 0.74
       const amp = (e1 - e0) * 0.78
       const beats = s.beats
@@ -580,38 +622,59 @@ function makeEngine(r) {
       ctx.arc(w - 3, lastY, 4.5, 0, TAU)
       ctx.fill()
 
-      // power channel
-      const p0 = h * 0.68
-      const p1 = h * 0.97
-      const pw = s.pow
-      if (pw.length > 4) {
+      // power channel: its own, slower time base so each 8 s sprint reads as a block against the 12 s easy spin
+      const PY = (watts) => p1 - clamp01(watts / W_MAX) * (p1 - p0)
+      const ppx = w / POW_WIN
+      const y600 = Math.round(PY(600))
+      ctx.fillStyle = 'rgba(10,10,16,0.08)'
+      ctx.fillRect(0, band, w, h - band)
+      // 4 s grid, scrolling at the power time base
+      ctx.fillStyle = 'rgba(10,10,16,0.12)'
+      for (let tt = Math.floor(now / 4) * 4; tt > now - POW_WIN - 4; tt -= 4) ctx.fillRect(Math.round(w - (now - tt) * ppx), band, 1, h - band)
+      ctx.fillStyle = INK
+      ctx.fillRect(0, band, w, 1)
+      if (pw.n > 2) {
         ctx.beginPath()
         let started = false
-        for (let i = 0; i < pw.length; i += 2) {
-          const x = w - (now - pw[i]) * pxs
+        for (let j = 0; j < pw.n; j++) {
+          const k = (pw.head - pw.n + j + POW_N) % POW_N
+          const x = w - (now - pw.t[k]) * ppx
           if (x < -4) continue
-          const y = p1 - clamp01(pw[i + 1] / W_MAX) * (p1 - p0)
+          const y = PY(pw.w[k])
           if (!started) {
             ctx.moveTo(x, p1)
             ctx.lineTo(x, y)
             started = true
           } else ctx.lineTo(x, y)
         }
-        ctx.lineTo(w, p1 - clamp01(s.watts / W_MAX) * (p1 - p0))
+        ctx.lineTo(w, PY(s.watts))
         ctx.lineTo(w, p1)
         ctx.closePath()
-        ctx.fillStyle = 'rgba(10,10,16,0.16)'
+        ctx.fillStyle = 'rgba(10,10,16,0.2)'
         ctx.fill()
         ctx.strokeStyle = INK
-        ctx.lineWidth = 1.5
+        ctx.lineWidth = 2
+        ctx.lineJoin = 'round'
         ctx.stroke()
       }
-      ctx.fillStyle = 'rgba(10,10,16,0.7)'
-      ctx.font = `500 9.5px ${MONO}`
+      // 600 W reference
+      ctx.setLineDash([4, 4])
+      ctx.strokeStyle = 'rgba(10,10,16,0.5)'
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(0, y600 + 0.5)
+      ctx.lineTo(w, y600 + 0.5)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle = 'rgba(10,10,16,0.75)'
+      ctx.font = `500 10.5px ${MONO}`
+      ctx.textBaseline = 'bottom'
+      ctx.textAlign = 'right'
+      ctx.fillText('600 W', w - 8, y600 - 3)
       ctx.textAlign = 'left'
       ctx.textBaseline = 'top'
       ctx.fillText('HR · LEAD II', 10, 8)
-      ctx.fillText('POWER · W', 10, p0 - 14)
+      ctx.fillText(`POWER · W · LAST ${POW_WIN} S`, 10, p0 - 16)
     },
   }
 }
@@ -690,13 +753,15 @@ export function EngineViz() {
    ===================================================================================== */
 const IN = 4
 const OUT = 6
-const HRV_LO = 44
-const HRV_HI = 66
+const HRV_LO = 46
+const HRV_HI = 64
+const HIST = 36
+/** a session that has already been settling for a while: HRV rising from 48 toward the mid-50s */
+const risingHistory = (to) => Array.from({ length: HIST }, (_, i) => 48 + ((to - 48) * Math.pow(i / (HIST - 1), 1.3)) + Math.sin(i * 1.3) * 0.6)
 
 function makeBreath(r) {
   let still = reducedMotion()
-  const s = { t: 0, p: 0, lag: 0, inhale: true, hrv: 48, hrvT: 0, hist: [], cntT: 0 }
-  for (let i = 0; i < 36; i++) s.hist.push(48 + Math.sin(i * 1.7) * 0.8)
+  const s = { t: 0, p: 0, lag: 0, inhale: true, hrv: 54.5, hrvT: 0, hist: risingHistory(54.5), cntT: 0 }
 
   const spark = () => {
     const el = r.spark.current
@@ -726,7 +791,7 @@ function makeBreath(r) {
       for (let i = 0; i < sec * 60; i++) this.step(1 / 60)
       still = was
     },
-    warmup: 0.6,
+    warmup: 1.2,
     step(dt) {
       s.t += dt
       const c = s.t % (IN + OUT)
@@ -745,14 +810,14 @@ function makeBreath(r) {
         s.hrv += (62 - s.hrv) * 0.05 + (Math.random() - 0.5) * 0.7
         s.hrv = Math.min(62.4, Math.max(47.6, s.hrv))
         s.hist.push(s.hrv)
-        if (s.hist.length > 36) s.hist.shift()
+        if (s.hist.length > HIST) s.hist.shift()
         put(r.hrv.current, String(Math.round(s.hrv)))
         spark()
       }
     },
     prime() {
       s.hrv = 57
-      s.hist = s.hist.map((_, i) => 48 + (9 * i) / 35 + Math.sin(i * 1.3) * 0.7)
+      s.hist = risingHistory(57)
       for (let i = 0; i < 60 * 2.6; i++) this.step(1 / 60)
       put(r.hrv.current, String(Math.round(s.hrv)))
       spark()
@@ -778,19 +843,24 @@ function makeBreath(r) {
       ctx.stroke()
       ctx.setLineDash([])
 
-      // tick ring fills over the inhale, empties over the exhale
+      // tick ring fills over the inhale, empties over the exhale (two batched paths: lit / unlit)
       const N = 72
       const f = s.f || 0
-      for (let i = 0; i < N; i++) {
-        const a = -Math.PI / 2 + (i / N) * TAU
-        const on = s.inhale ? i / N < f : i / N >= f
-        const r0 = R + 8
-        const r1 = R + (i % 6 === 0 ? 20 : 15)
-        ctx.strokeStyle = on ? COBALT : 'rgba(10,10,16,0.16)'
-        ctx.lineWidth = on ? 2.2 : 1.2
+      const r0 = R + 8
+      for (let pass = 0; pass < 2; pass++) {
         ctx.beginPath()
-        ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0)
-        ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1)
+        for (let i = 0; i < N; i++) {
+          const on = s.inhale ? i / N < f : i / N >= f
+          if (on !== (pass === 1)) continue
+          const a = -Math.PI / 2 + (i / N) * TAU
+          const r1 = R + (i % 6 === 0 ? 20 : 15)
+          const ca = Math.cos(a)
+          const sa = Math.sin(a)
+          ctx.moveTo(cx + ca * r0, cy + sa * r0)
+          ctx.lineTo(cx + ca * r1, cy + sa * r1)
+        }
+        ctx.strokeStyle = pass ? COBALT : 'rgba(10,10,16,0.16)'
+        ctx.lineWidth = pass ? 2.2 : 1.2
         ctx.stroke()
       }
 
@@ -835,7 +905,7 @@ export function BreathViz() {
         <div>
           <p className="mono prg-k">HRV · RMSSD</p>
           <p className="prg-mid tnum">
-            <b ref={r.hrv}>48</b>
+            <b ref={r.hrv}>55</b>
             <small className="mono">ms</small>
           </p>
         </div>
@@ -866,14 +936,14 @@ const ROUND = 180
 
 function makeFight(r) {
   let still = reducedMotion()
-  const s = { t: 0, next: 0.4, combo: 3, hits: [], marks: [], count: 0, peak: 0, clock: ROUND, rest: 0, sx: 0, sy: 0, vx: 0, vy: 0, txtT: 0, squash: 0, R: 100 }
+  const s = { t: 0, next: 0.4, combo: 3, hits: [], marks: [], count: 0, peak: 0, clock: ROUND, rest: 0, round: 2, sx: 0, sy: 0, vx: 0, vy: 0, txtT: 0, squash: 0, R: 100 }
 
   const strike = () => {
     const [type, lo, hi] = STRIKES[(Math.random() * STRIKES.length) | 0]
     const v = Math.min(9.4, rand(lo, hi))
     const a = rand(0, TAU)
     const d = Math.sqrt(Math.random()) * 0.42
-    const hit = { x: Math.cos(a) * d, y: Math.sin(a) * d, t: s.t, v, type, rot: rand(0, TAU) }
+    const hit = { x: Math.cos(a) * d, y: Math.sin(a) * d, t: s.t, v, type, rot: rand(0, TAU), label: `${type} ${v.toFixed(1)}`, lw: 0 }
     s.hits.push(hit)
     if (s.hits.length > 8) s.hits.shift()
     s.marks.push(hit)
@@ -915,6 +985,8 @@ function makeFight(r) {
           s.clock = ROUND
           s.count = 0
           s.peak = 0
+          s.round = (s.round % 5) + 1
+          put(r.round.current, `Round ${s.round}`)
           put(r.count.current, '0')
           put(r.peak.current, '0.0')
           r.clockBox.current?.classList.remove('is-end')
@@ -970,8 +1042,8 @@ function makeFight(r) {
       ctx.fillStyle = 'rgba(239,238,233,0.1)'
       ctx.fillRect(0, Math.round(h / 2), w, 1)
       ctx.fillRect(Math.round(w / 2), 0, 1, h)
-      ctx.font = `500 9.5px ${MONO}`
-      ctx.fillStyle = 'rgba(239,238,233,0.45)'
+      ctx.font = `500 10.5px ${MONO}`
+      ctx.fillStyle = 'rgba(239,238,233,0.5)'
       ctx.textBaseline = 'top'
       ctx.textAlign = 'left'
       ctx.fillText('PAD CAM', 12, 10)
@@ -1003,15 +1075,17 @@ function makeFight(r) {
       ctx.fill()
 
       // hit map
+      ctx.fillStyle = HEAT
       for (const m of s.marks) {
-        const age = s.t - m.t
-        const a = Math.max(0, 1 - age / 9) * 0.55
+        const a = Math.max(0, 1 - (s.t - m.t) / 9) * 0.55
         if (a <= 0) continue
-        ctx.fillStyle = `rgba(255,75,31,${a.toFixed(3)})`
+        ctx.globalAlpha = a
         ctx.fillRect(m.x * R - 2, m.y * R - 2, 4, 4)
       }
+      ctx.globalAlpha = 1
 
       // impacts
+      const newest = s.hits[s.hits.length - 1]
       for (const it of s.hits) {
         const age = s.t - it.t
         if (age > 0.7) continue
@@ -1019,7 +1093,8 @@ function makeFight(r) {
         const y = it.y * R
         if (age < 0.22) {
           const u = age / 0.22
-          ctx.fillStyle = `rgba(255,75,31,${(1 - u).toFixed(3)})`
+          ctx.fillStyle = HEAT
+          ctx.globalAlpha = 1 - u
           ctx.beginPath()
           ctx.arc(x, y, 6 + 26 * easeOutExpo(u), 0, TAU)
           ctx.fill()
@@ -1038,20 +1113,34 @@ function makeFight(r) {
             ctx.lineTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1)
           }
           ctx.stroke()
-          ctx.globalAlpha = 1
         }
         const u = age / 0.7
-        ctx.strokeStyle = `rgba(239,238,233,${(0.8 * (1 - u)).toFixed(3)})`
+        ctx.strokeStyle = PAPER
+        ctx.globalAlpha = 0.8 * (1 - u)
         ctx.lineWidth = 2
         ctx.beginPath()
         ctx.arc(x, y, 8 + R * 0.72 * easeOutCubic(u), 0, TAU)
         ctx.stroke()
-        ctx.fillStyle = `rgba(239,238,233,${(1 - u).toFixed(3)})`
-        ctx.font = `600 11px ${MONO}`
-        ctx.textBaseline = 'middle'
-        ctx.fillText(`${it.type} ${it.v.toFixed(1)}`, x + 16, y - 16 - age * 30)
       }
+      ctx.globalAlpha = 1
       ctx.restore()
+
+      // one label: the newest strike only (combo labels used to pile up), kept inside the canvas
+      if (newest && s.t - newest.t < 0.7) {
+        const age = s.t - newest.t
+        ctx.font = `600 11.5px ${MONO}`
+        ctx.textBaseline = 'middle'
+        ctx.textAlign = 'left'
+        if (!newest.lw) newest.lw = ctx.measureText(newest.label).width
+        const hx = cx + newest.x * R * sq
+        const hy = cy + newest.y * R * sq
+        const lx = hx + 18 + newest.lw < w - 10 ? hx + 18 : hx - 18 - newest.lw
+        const ly = Math.max(14, Math.min(h - 14, hy - 18 - age * 30))
+        ctx.globalAlpha = 1 - age / 0.7
+        ctx.fillStyle = PAPER
+        ctx.fillText(newest.label, Math.max(10, lx), ly)
+        ctx.globalAlpha = 1
+      }
     },
   }
 }
@@ -1063,6 +1152,7 @@ export function FightViz() {
     clock: useRef(null),
     tenth: useRef(null),
     clockBox: useRef(null),
+    round: useRef(null),
     count: useRef(null),
     last: useRef(null),
     lastType: useRef(null),
@@ -1078,7 +1168,9 @@ export function FightViz() {
         <canvas ref={canvas} className="prg-cv" />
         <div ref={r.clockBox} className="prg-ff-clock">
           <p className="mono prg-k">
-            <span className="prg-ff-rl">Round 2</span>
+            <span ref={r.round} className="prg-ff-rl">
+              Round 2
+            </span>
             <span className="prg-ff-end">Round over</span>
           </p>
           <p className="prg-mid tnum">

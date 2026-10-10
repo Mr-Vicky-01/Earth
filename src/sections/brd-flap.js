@@ -17,6 +17,8 @@
 export const BLANK = ' '
 export const POOL_TEXT = 'ABCDEFGHIJKLMNOPRSTUVWXYZ0123456789+./'
 export const POOL_DIGIT = '0123456789'
+// a real digit module only turns forward: blank, 0-9, then round again
+export const DRUM_DIGIT = BLANK + '0123456789'
 
 const norm = (ch) => (ch === ' ' || !ch ? BLANK : ch)
 
@@ -110,10 +112,11 @@ export function createFlapEngine({ reduced = false } = {}) {
 
   /**
    * Flap `c` to `target`, passing through `flips` random characters first.
-   * opts: flips, delay (ms), dur (ms per flip), lastDur (ms for the landing flip), pool, ease, onLand
+   * opts: flips, delay (ms), dur (ms per flip), lastDur (ms for the landing flip), pool, ease, onLand,
+   *       drum – when both ends are on this drum, walk it forward one flap at a time instead (ignores flips)
    */
   function flap(c, target, opts = {}) {
-    const { flips = 0, delay = 0, dur = 35, lastDur = dur, pool = POOL_TEXT, ease = false, onLand = null } = opts
+    const { flips = 0, delay = 0, dur = 35, lastDur = dur, pool = POOL_TEXT, ease = false, onLand = null, drum = null } = opts
     target = norm(target)
     if (reduced) {
       snap(c, target)
@@ -129,7 +132,10 @@ export function createFlapEngine({ reduced = false } = {}) {
     }
     const seq = []
     let prev = c.cur
-    for (let k = 0; k < flips; k++) {
+    const a = drum ? drum.indexOf(prev) : -1
+    if (a >= 0 && target !== prev && drum.includes(target)) {
+      for (let k = (a + 1) % drum.length; drum[k] !== target; k = (k + 1) % drum.length) seq.push(drum[k])
+    } else for (let k = 0; k < flips; k++) {
       let ch = pool[(Math.random() * pool.length) | 0]
       if (ch === prev) ch = pool[(pool.indexOf(ch) + 1) % pool.length]
       seq.push(ch)

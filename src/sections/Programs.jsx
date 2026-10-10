@@ -102,7 +102,7 @@ export function Programs() {
   const pct = useRef(null)
   const speed = useRef(null)
   const nav = useRef(null)
-  const live = useRef({ desk: false, tween: null, centers: [], vw: 1, sk: 0, w: 75, lastX: null, vx: 0, txtT: 0, idx: -1, prox: [] })
+  const live = useRef({ desk: false, tween: null, centers: [], rest: [], titles: [], caps: [], vw: 1, sk: 0, tf: [], lastX: null, vx: 0, txtT: 0, idx: -1, prox: [] })
   const stageIn = useInView(stage, '0px')
   useSectionEdge(ref)
 
@@ -119,9 +119,27 @@ export function Programs() {
           const st = stage.current
           const tr = track.current
           const dist = () => Math.max(0, tr.scrollWidth - st.clientWidth)
+          L.titles = slots.map((s) => s.querySelector('.prg-title'))
           const measure = () => {
-            L.vw = st.clientWidth || window.innerWidth
+            const vw = st.clientWidth || window.innerWidth
+            const d = dist()
+            L.vw = vw
             L.centers = slots.map((s) => s.offsetLeft + s.offsetWidth / 2)
+            // where each panel counts as "in focus": the first/last can't reach the centre, so they rest where the run starts/ends
+            L.rest = L.centers.map((c, i) => (i === 0 ? c : i === LAST ? c - d : vw / 2))
+            // how far each title may stretch before it would run into the instrument screen
+            L.caps = L.titles.map((t) => {
+              const col = t.parentElement
+              let right = 0
+              t.querySelectorAll('.d-line').forEach((line) => {
+                const chars = line.querySelectorAll('.ch')
+                const last = chars[chars.length - 1]
+                if (last) right = Math.max(right, last.offsetLeft + last.offsetWidth - t.offsetLeft)
+              })
+              const room = col.clientWidth + 18
+              return right > 0 ? Math.max(1, Math.min(1.3, room / right)) : 1
+            })
+            L.tf = []
           }
           const tween = gsap.to(tr, {
             x: () => -dist(),
@@ -166,8 +184,8 @@ export function Programs() {
             // giant word drifts against the run
             gsap.fromTo(
               slot.querySelector('.prg-water'),
-              { xPercent: 22 },
-              { xPercent: -22, ease: 'none', scrollTrigger: { trigger: slot, containerAnimation: tween, start: 'left right', end: 'right left', scrub: true } },
+              { xPercent: 40 },
+              { xPercent: -40, ease: 'none', scrollTrigger: { trigger: slot, containerAnimation: tween, start: 'left right', end: 'right left', scrub: true } },
             )
           })
 
@@ -176,8 +194,11 @@ export function Programs() {
             L.tween = null
             L.lastX = null
             L.prox = []
+            L.tf = []
             L.idx = -1
+            L.skShown = 0
             if (rail.current) rail.current.style.transform = ''
+            L.titles.forEach((t) => t && (t.style.transform = ''))
             panels.forEach((p) => {
               p.style.transform = ''
               const v = p.querySelector('.prg-veil')
@@ -191,13 +212,16 @@ export function Programs() {
             const dir = i % 2 === 0 ? -1 : 1
             const panel = panels[i]
             const tl = entrance(slot, dir)
-            gsap.set(panel, { xPercent: 104 * dir, skewX: 14 * dir, scaleX: 1.12, transformOrigin: '50% 50%' })
+            // parked fully off-screen: scaleX 1.12 widens it by 6% a side and the skew swings its corners by
+            // tan(14deg) x half its height, so push it out by both, or a stray wedge pokes into the viewport early
+            const corner = () => dir * (Math.tan((14 * Math.PI) / 180) * (panel.offsetHeight / 2) + 16)
+            gsap.set(panel, { xPercent: 108 * dir, x: corner, skewX: 14 * dir, scaleX: 1.12, transformOrigin: '50% 50%' })
             ScrollTrigger.create({
               trigger: slot,
               start: 'top 86%',
               once: true,
               onEnter: () => {
-                gsap.to(panel, { xPercent: 0, skewX: 0, scaleX: 1, duration: 0.85, ease: 'expo.out', clearProps: 'transform' })
+                gsap.to(panel, { xPercent: 0, x: 0, skewX: 0, scaleX: 1, duration: 0.85, ease: 'expo.out', clearProps: 'transform' })
                 tl.play()
               },
             })
@@ -209,7 +233,149 @@ export function Programs() {
           })
         }
       })
-      return () => mm.revert()
+
+      /*
+       * Crossing the 900px breakpoint swaps layouts. ScrollTrigger records the scroll position before the swap, but any
+       * trigger created inside a matchMedia callback refreshes on its own and wipes that record, so the global refresh
+       * that follows parks the page at 0. Note where the reader is (in program terms) before the swap and put them
+       * back on the same panel afterwards.
+       * By the time gsap announces the change, the browser has already reflowed (and maybe clamped scrollY) and
+       * ScrollTrigger has already unpinned, so the "before" picture comes from geometry cached at the last refresh plus
+       * the last scroll position seen before the resize. A reader outside Programs is anchored to the section they
+       * were reading, since this section's height changes a lot between the two layouts.
+       */
+      const geo = { ok: false, vh: 1, top: 0, bottom: 0, run: null, boxes: [], secs: [] }
+      // a pinned section sits inside a pin-spacer; measure the spacer so a pin in progress doesn't skew the top
+      const pageTop = (el, y) => {
+        const box = el.parentElement && el.parentElement.classList.contains('pin-spacer') ? el.parentElement : el
+        return box.getBoundingClientRect().top + y
+      }
+      const cacheGeo = () => {
+        if (!root.isConnected) return
+        const y = window.scrollY
+        const r = root.getBoundingClientRect()
+        // the other sections, so a reader outside Programs is put back in the section they were reading
+        geo.secs = Array.from(document.querySelectorAll('section[id], footer'))
+          .filter((el) => el !== root && !root.contains(el) && !el.contains(root))
+          .map((el) => ({ el, top: pageTop(el, y) }))
+        const st = L.desk && L.tween ? L.tween.scrollTrigger : null
+        geo.vh = window.innerHeight
+        geo.top = r.top + y
+        geo.bottom = r.bottom + y
+        geo.run = st ? { start: st.start, end: st.end } : null
+        geo.boxes = slots.map((sl) => {
+          const b = sl.getBoundingClientRect()
+          return { top: b.top + y, h: b.height }
+        })
+        geo.ok = true
+      }
+      let anchor = null
+      let lastY = window.scrollY
+      let pinY = null // scroll position frozen from the resize event until the layout swap has been handled
+      let pinRaf = 0
+      const onScroll = () => {
+        if (pinY === null) lastY = window.scrollY
+      }
+      const onResize = () => {
+        if (pinY !== null) return
+        // the live value wins unless it sits at the new bottom limit (the browser may have clamped it on reflow);
+        // it can be ahead of lastY when a scroll happened but its event hasn't been dispatched yet
+        const live = window.scrollY
+        const max = document.documentElement.scrollHeight - window.innerHeight
+        pinY = Math.abs(live - lastY) > 1 && live < max - 1 ? live : lastY
+        cancelAnimationFrame(pinRaf)
+        pinRaf = requestAnimationFrame(() => {
+          pinRaf = requestAnimationFrame(() => {
+            pinY = null
+            lastY = window.scrollY
+          })
+        })
+      }
+      window.addEventListener('scroll', onScroll, { passive: true })
+      window.addEventListener('resize', onResize)
+      const outside = (y, read) => {
+        // reading another section: anchor to that section's top
+        let best = null
+        for (const sec of geo.secs) if (sec.top <= read && (!best || sec.top > best.top)) best = sec
+        return best ? { kind: 'el', el: best.el, off: y - best.top } : { kind: 'raw', y }
+      }
+      const noteAnchor = () => {
+        anchor = null
+        if (!geo.ok || !root.isConnected) return
+        const y = pinY ?? lastY
+        const read = y + geo.vh * 0.35
+        const { top, bottom, run, boxes } = geo
+        if (read < top || read > bottom) {
+          anchor = outside(y, read)
+          return
+        }
+        if (run) {
+          if (y < run.start) anchor = { kind: 'top', off: y - top }
+          else if (y > run.end) anchor = { kind: 'bottom', off: y - bottom }
+          else anchor = { kind: 'panel', src: 'desk', f: ((y - run.start) / Math.max(1, run.end - run.start)) * LAST }
+          return
+        }
+        if (read < boxes[0].top) anchor = { kind: 'top', off: y - top }
+        else if (read > boxes[LAST].top + boxes[LAST].h) anchor = { kind: 'bottom', off: y - bottom }
+        else {
+          let i = 0
+          while (i < LAST && boxes[i + 1].top <= read) i++
+          anchor = { kind: 'panel', src: 'mob', f: i + Math.min(0.999, Math.max(0, (read - boxes[i].top) / Math.max(1, boxes[i].h))) }
+        }
+      }
+      const restoreAnchor = () => {
+        const a = anchor
+        anchor = null
+        if (!a || !root.isConnected) return
+        cacheGeo()
+        const vh = window.innerHeight
+        let y = a.y
+        if (a.kind === 'el') y = a.el.isConnected ? pageTop(a.el, window.scrollY) + a.off : window.scrollY
+        else if (a.kind === 'top') y = geo.top + a.off
+        else if (a.kind === 'bottom') y = geo.bottom + a.off
+        else if (a.kind === 'panel') {
+          if (geo.run) {
+            // stage pinned: land on the same panel (a stacked phone panel maps to its own stop on the run)
+            const f = a.src === 'desk' ? a.f : Math.floor(a.f)
+            y = geo.run.start + (geo.run.end - geo.run.start) * (f / LAST)
+          } else {
+            const i = a.src === 'mob' ? Math.floor(a.f) : Math.round(a.f)
+            const b = geo.boxes[i]
+            y = a.src === 'mob' ? b.top + (a.f - i) * b.h - vh * 0.35 : b.top - 76
+          }
+        }
+        y = Math.max(0, Math.round(y))
+        lastY = y
+        if (pinY !== null) pinY = y
+        if (Math.abs(window.scrollY - y) < 2) return
+        // native first (Lenis still believes it sits at the old target and would treat the jump as a no-op),
+        // then bring Lenis onto the same spot with fresh limits
+        window.scrollTo(0, y)
+        const lenis = getLenis()
+        if (lenis) {
+          lenis.resize()
+          lenis.scrollTo(y, { immediate: true, force: true })
+        }
+        ScrollTrigger.update()
+      }
+      ScrollTrigger.addEventListener('refresh', cacheGeo)
+      // the page can also reflow without a refresh (fonts, images, other sections); re-measure after any size change.
+      // ResizeObserver runs after layout, i.e. after the media-change handling of the same frame
+      const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => cacheGeo())
+      ro?.observe(document.body)
+      gsap.addEventListener('matchMediaInit', noteAnchor)
+      gsap.addEventListener('matchMedia', restoreAnchor)
+
+      return () => {
+        ro?.disconnect()
+        window.removeEventListener('scroll', onScroll)
+        window.removeEventListener('resize', onResize)
+        cancelAnimationFrame(pinRaf)
+        ScrollTrigger.removeEventListener('refresh', cacheGeo)
+        gsap.removeEventListener('matchMediaInit', noteAnchor)
+        gsap.removeEventListener('matchMedia', restoreAnchor)
+        mm.revert()
+      }
     },
     { scope: ref },
   )
@@ -227,10 +393,18 @@ export function Programs() {
         L.skShown = skv
         rail.current.style.transform = skv ? `skewX(${skv}deg)` : ''
       }
-      const w = Math.round((75 + scroll.abs * 8) * 2) / 2
-      if (w !== L.w && track.current) {
-        L.w = w
-        track.current.style.setProperty('--prg-w', w)
+      // titles stretch with speed: compositor-only scaleX + a little extra lean, capped so they never hit the screen
+      const pull = Math.min(1, scroll.abs * 1.6)
+      const lean = Math.round(-scroll.norm * 10 * 2) / 2
+      for (let i = 0; i < L.titles.length; i++) {
+        const title = L.titles[i]
+        if (!title) continue
+        const steps = Math.round((1 + ((L.caps[i] || 1) - 1) * pull) * 200) // scaleX in 0.005 steps
+        const key = steps * 100 + (lean * 2 + 50) // lean is ±10 in 0.5 steps → 30..70
+        if (key !== L.tf[i]) {
+          L.tf[i] = key
+          title.style.transform = steps === 200 && !lean ? '' : `skewX(${lean}deg) scaleX(${steps / 200})`
+        }
       }
 
       const x = Number(gsap.getProperty(track.current, 'x')) || 0
@@ -238,7 +412,9 @@ export function Programs() {
       for (let i = 0; i < slots.length; i++) {
         const c = L.centers[i]
         if (c === undefined) continue
-        const d = Math.min(1, Math.abs((c + x - L.vw / 2) / L.vw) * 1.25)
+        // dead zone around each panel's resting spot, so the panel people read clears to transform: none (sharp text)
+        const raw = Math.abs((c + x - L.rest[i]) / L.vw) * 1.25
+        const d = Math.min(1, Math.max(0, raw - 0.12) / 0.88)
         const q = Math.round(d * 200) / 200
         if (q !== L.prox[i]) {
           L.prox[i] = q
@@ -288,9 +464,12 @@ export function Programs() {
     return true
   }
 
-  const onSlotFocus = (i) => {
-    const L = live.current
-    if (L.desk && L.idx !== i) jump(i, true)
+  /** keyboard focus inside a panel: after the browser's own focus scroll, realign the run so that panel is in view */
+  const onSlotFocus = (i, e) => {
+    if (!live.current.desk) return
+    const t = e.target
+    if (t && typeof t.matches === 'function' && !t.matches(':focus-visible')) return
+    requestAnimationFrame(() => jump(i, true))
   }
 
   const toSchedule = (e) => {
@@ -345,7 +524,7 @@ export function Programs() {
         <div ref={rail} className="prg-rail">
           <div ref={track} className="prg-track">
             {PROGRAMS.map((p, i) => (
-              <div key={p.key} className="prg-slot" onFocus={() => onSlotFocus(i)}>
+              <div key={p.key} className="prg-slot" onFocus={(e) => onSlotFocus(i, e)}>
                 <article className={`prg-panel prg-p-${p.key} ${p.surface}`} aria-labelledby={`prg-t-${p.key}`}>
                   <span className="prg-water d" aria-hidden="true">
                     {p.water}

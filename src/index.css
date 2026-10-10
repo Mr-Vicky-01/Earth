@@ -82,6 +82,8 @@
   .sec {
     position: relative;
     isolation: isolate;
+    /* clip sideways only: entrances that start off-screen never widen the page, the top wedge still shows */
+    overflow-x: clip;
   }
   .pad {
     padding-block: clamp(5rem, 11vw, 10rem);
@@ -204,7 +206,6 @@
   }
   .ch {
     display: inline-block;
-    will-change: transform;
   }
   .w {
     display: inline-block;

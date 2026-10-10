@@ -26,7 +26,7 @@ export function Hud({ ready }) {
   const meter = useRef(null)
   const bar = useRef(null)
   const streaks = useRef(null)
-  const state = useRef({ last: 0, peak: 0, shown: '', seg: -1, off: 0, op: 0 })
+  const state = useRef({ last: 0, peak: 0, shown: '', seg: -1, off: 0, op: 0, movedAt: -10, awake: false })
   const still = reducedMotion()
 
   useTicker((t, dt) => {
@@ -47,6 +47,13 @@ export function Hud({ ready }) {
     if (t - s.last < 0.05) return
     s.last = t
     const ms = Math.abs(scroll.smooth) * 60 * PX_TO_M
+    // the meter only shows while you scroll and slides away 1.4 s after you stop, so it never sits on content
+    if (ms > 0.02) s.movedAt = t
+    const awake = ready && t - s.movedAt < 1.4
+    if (awake !== s.awake && hud.current) {
+      s.awake = awake
+      hud.current.classList.toggle('is-in', awake)
+    }
     if (ms > s.peak) {
       s.peak = ms
       if (peak.current) peak.current.textContent = ms.toFixed(2)
@@ -74,7 +81,7 @@ export function Hud({ ready }) {
           <i key={i} style={{ [side]: at, '--sw': `${w}px`, '--len': `${len}px`, '--period': `${period}px` }} />
         ))}
       </div>
-      <div ref={hud} className={`chr-hud chr-plate ${ready ? 'is-in' : ''}`} aria-hidden="true">
+      <div ref={hud} className="chr-hud chr-plate" aria-hidden="true">
         <span>Scroll</span>
         <span>
           <b ref={speed}>0.00</b> m/s

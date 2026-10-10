@@ -235,8 +235,8 @@
     position: relative;
     height: 1.25rem;
     margin-top: 0.3rem;
-    font-size: 0.66rem;
-    color: rgb(239 238 233 / 0.86);
+    font-size: 0.68rem;
+    color: rgb(239 238 233 / 0.88);
   }
   .pull-zones .is-elite {
     color: var(--fg);

@@ -135,8 +135,8 @@
     opacity: 0;
     transform: translateX(-120%);
     transition:
-      opacity 0.5s,
-      transform 0.7s var(--ease-expo);
+      opacity 0.35s,
+      transform 0.45s var(--ease-expo);
   }
   .chr-hud.is-in {
     opacity: 1;

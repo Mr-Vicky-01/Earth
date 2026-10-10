@@ -1,4 +1,11 @@
 @layer components {
+  /* side-pulled pieces (the footer comes in from the right) never widen the page; the wedge above stays visible */
+  .brd {
+    overflow-x: clip;
+  }
+  .brd .live-dot {
+    border-radius: 0;
+  }
   /* ---------- header: headline left, split-flap clock right ---------- */
   .brd-head {
     position: relative;
@@ -165,6 +172,17 @@
     z-index: 3;
     border-inline: 2px solid #050508;
   }
+  /* TIME's colon is printed on the panel between the digit modules: no tile, no flap */
+  .brd-c--sep {
+    width: calc(var(--cw) * 0.5);
+    color: rgb(239 238 233 / 0.42);
+  }
+  .brd-c--sep > .brd-g {
+    background: none;
+  }
+  .brd-c--sep::after {
+    display: none;
+  }
   .brd-c--k {
     --brd-t1: #22222f;
     --brd-t2: #1a1a25;
@@ -203,42 +221,113 @@
     border-right: 2px solid var(--color-paper);
     border-bottom: 2px solid var(--color-paper);
   }
+  /* bezel: every readout has a fixed slot, so a new booking line never moves the board */
   .brd-bezel {
     --padx: clamp(14px, 1.8cqi, 28px);
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.45rem 1.5rem;
+    gap: 0.45rem 1.4rem;
     padding: 0.85rem var(--padx);
     border-bottom: 1px solid var(--line);
     font-size: 0.66rem;
+    line-height: 1.35;
+    white-space: nowrap;
   }
   .brd-bezel-l {
     display: inline-flex;
     align-items: center;
     gap: 0.6rem;
   }
-  .brd-bezel-r {
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.3rem 1.4rem;
+  .brd-openbox {
+    margin-left: auto;
   }
   .brd-open {
     color: var(--fg);
     font-weight: 600;
   }
+  .brd-last {
+    display: block;
+    inline-size: 46ch;
+    min-block-size: 1lh;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: right;
+  }
   .brd-swipe {
     display: none;
+  }
+  .brd-unit[data-overflow] .brd-swipe {
+    display: inline;
+  }
+  /* two fixed lines: label + swipe hint, then the two readouts (explicit cells: nothing shifts when the hint hides) */
+  @container (max-width: 719px) {
+    .brd-bezel {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      row-gap: 0.4rem;
+    }
+    .brd-bezel-l {
+      grid-area: 1 / 1;
+    }
+    .brd-swipe {
+      grid-area: 1 / 2;
+      justify-self: end;
+    }
+    .brd-openbox {
+      grid-area: 2 / 1;
+      margin: 0;
+    }
+    .brd-last {
+      grid-area: 2 / 2;
+      justify-self: end;
+    }
+  }
+  /* phone: three fixed lines, the booking readout gets its own and truncates rather than wraps */
+  @container (max-width: 559px) {
+    .brd-last {
+      grid-area: 3 / 1 / 4 / -1;
+      justify-self: stretch;
+      inline-size: auto;
+      text-align: left;
+    }
   }
 
   /* day rail: 05:30 → 21:30, a tick per class, heat playhead at the current minute */
   .brd-rail {
     --padx: clamp(14px, 1.8cqi, 28px);
     position: relative;
-    height: 2.4rem;
+    height: 3rem;
     margin-inline: var(--padx);
+  }
+  /* the scale: day start and end under the line, the next class above its tick */
+  .brd-rail-lbl,
+  .brd-rail-next {
+    position: absolute;
+    font-size: 0.56rem;
+    line-height: 1;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+  }
+  .brd-rail-lbl {
+    top: calc(50% + 0.5rem);
+    color: var(--mute);
+  }
+  .brd-rail-lbl--from {
+    left: 0;
+  }
+  .brd-rail-lbl--to {
+    right: 0;
+  }
+  .brd-rail-next {
+    bottom: calc(50% + 0.55rem);
+    color: var(--color-heat);
+    translate: -50% 0;
+  }
+  .brd-rail-next[data-side="l"] {
+    translate: -2px 0;
+  }
+  .brd-rail-next[data-side="r"] {
+    translate: calc(-100% + 2px) 0;
   }
   .brd-rail::before {
     content: "";
@@ -271,6 +360,13 @@
     background: var(--color-paper);
     opacity: 1;
   }
+  .brd-rail-tick.is-next {
+    top: calc(50% - 7px);
+    width: 2px;
+    height: 14px;
+    background: var(--color-heat);
+    opacity: 1;
+  }
   .brd-rail-head {
     position: absolute;
     left: 0;
@@ -290,6 +386,7 @@
   }
   .brd-rail-now {
     position: absolute;
+    z-index: 1;
     left: 0.7rem;
     top: -0.45rem;
     font-size: 0.6rem;
@@ -318,15 +415,14 @@
     --colg: clamp(10px, 1.25cqi, 20px);
     --padx: clamp(14px, 1.8cqi, 28px);
     --mk: 4.7rem;
-    --n: 46;
+    /* cells, gaps between cells, and column gaps that must fit side by side (TIME's colon is half a cell) */
+    --n: 45.5;
     --ng: 41;
     --ncg: 5;
     --padr: var(--padx);
     --cmin: 13px;
-    --cw: max(
-      var(--cmin),
-      min(30px, calc((100cqi - var(--padx) - var(--padr) - var(--mk) - var(--ncg) * var(--colg) - var(--ng) * var(--gap)) / var(--n)))
-    );
+    --cwfit: calc((100cqi - var(--padx) - var(--padr) - var(--mk) - var(--ncg) * var(--colg) - var(--ng) * var(--gap)) / var(--n));
+    --cw: max(var(--cmin), min(30px, var(--cwfit)));
     --chh: calc(var(--cw) * 1.42);
     width: max-content;
     min-width: 100%;
@@ -353,7 +449,7 @@
   }
   .brd-hd {
     flex: none;
-    width: calc(var(--k) * var(--cw) + (var(--k) - 1) * var(--gap));
+    width: calc(var(--k) * var(--cw) + var(--kg) * var(--gap));
     font-family: var(--font-mono);
     font-size: 0.62rem;
     font-weight: 500;
@@ -361,6 +457,9 @@
     text-transform: uppercase;
     color: var(--mute);
     white-space: nowrap;
+  }
+  .brd-hd.brd-col--spots {
+    text-align: right;
   }
   .brd-mk {
     flex: none;
@@ -385,10 +484,34 @@
     transform-origin: 0 50%;
     pointer-events: none;
   }
+  .brd-row.is-shear {
+    will-change: translate;
+  }
+  /* ON NOW: a heat line under the row fills with the minutes gone (scaleX written once a second) */
+  .brd-prog {
+    display: none;
+    position: absolute;
+    left: calc(var(--padx) * 0.5);
+    right: calc(var(--padx) * 0.5);
+    bottom: 0;
+    height: 2px;
+    z-index: 1;
+    background: linear-gradient(90deg, var(--color-heat) 0 46%, #ffc2ad 50%, var(--color-heat) 54% 100%) 0 0 / 220% 100%;
+    transform: scaleX(0);
+    transform-origin: 0 50%;
+    pointer-events: none;
+    animation: brd-scan 2.4s linear infinite;
+  }
+  .brd-row[data-st="now"] .brd-prog {
+    display: block;
+  }
 
   /* row states */
   .brd-row[data-st="past"] {
-    --brd-gl: #77778a;
+    --brd-gl: var(--color-mute-ink, #8b8b9c);
+  }
+  .brd-row[data-st="now"] .brd-col--spots {
+    --brd-gl: #fff;
   }
   .brd-row[data-st="past"] .brd-c {
     --brd-t1: #191922;
@@ -485,19 +608,37 @@
   }
 
   /* narrow board: drop TARGET, keep cells legible, scroll sideways inside the housing */
+  /* narrow board: drop TARGET, SPOTS moves up beside SESSION, COACH becomes the swipe-to extra.
+     Fit all four columns when cells stay >= 15px; otherwise size TIME + SESSION + SPOTS to the screen
+     (leaving a peek of COACH) and scroll sideways inside the housing. */
   @container (max-width: 899px) {
     .brd-table {
-      --n: 33;
+      --n: 32.5;
       --ng: 29;
       --ncg: 4;
       --mk: 4.1rem;
       --gap: 2px;
       --colg: 11px;
-      --cmin: 14px;
-      --padr: calc(var(--padx) + 16px);
+      --cmin: 13px;
+      --peek: 22px;
+      --cwmust: calc((100cqi - var(--padx) - var(--peek) - var(--mk) - 3 * var(--colg) - 19 * var(--gap)) / 21.5);
+      --cw: max(var(--cmin), min(30px, max(var(--cwfit), min(var(--cwmust), 15px))));
     }
     .brd-col--target {
       display: none;
+    }
+    .brd-col--spots {
+      order: 3;
+    }
+    .brd-col--coach {
+      order: 4;
+    }
+    .brd-prog {
+      right: auto;
+      width: calc(var(--mk) + 3 * var(--colg) + 21.5 * var(--cw) + 19 * var(--gap) + var(--padx) * 0.5);
+    }
+    .brd-fade {
+      width: 44px;
     }
     .brd-scroll {
       overflow-x: auto;
@@ -508,9 +649,6 @@
     .brd-scroll::-webkit-scrollbar {
       display: none;
     }
-    .brd-swipe {
-      display: inline;
-    }
     .brd-tag {
       font-size: 0.6rem;
       padding: 0 0.38rem;
@@ -519,6 +657,84 @@
     }
   }
 
+  /* phone: the status column collapses to a slanted stripe (heat = next, outline = on now) with a key below */
+  .brd-key {
+    display: none;
+  }
+  @container (max-width: 559px) {
+    .brd-table {
+      --mk: 6px;
+      --colg: 8px;
+      --cmin: 12px;
+    }
+    .brd-mk {
+      position: relative;
+      align-self: stretch;
+    }
+    .brd-row[data-i] .brd-mk::before {
+      content: "";
+      position: absolute;
+      inset: 2px 0;
+      transform: skewX(var(--slant));
+    }
+    .brd-row[data-st="next"] .brd-mk::before,
+    .brd-row[data-st="tomorrow"] .brd-mk::before {
+      background: var(--color-heat);
+      animation: brd-stripe 0.55s var(--ease-expo);
+    }
+    .brd-row[data-st="now"] .brd-mk::before {
+      border: 1px solid var(--color-paper);
+      animation: brd-stripe 0.55s var(--ease-expo);
+    }
+    /* tags stay in the accessibility tree, out of sight */
+    .brd-row[data-i] .brd-mk .brd-tag {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+    }
+    .brd-fade {
+      width: 24px;
+    }
+    .brd-key {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem 1.2rem;
+      padding: 0 var(--padx, 14px) 0.9rem;
+      margin-top: -0.35rem;
+      font-size: 0.58rem;
+      color: var(--mute);
+    }
+    .brd-key > span {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+    }
+    .brd-key-sw {
+      display: block;
+      width: 5px;
+      height: 0.8rem;
+      transform: skewX(var(--slant));
+    }
+    .brd-key-sw--next {
+      background: var(--color-heat);
+    }
+    .brd-key-sw--now {
+      border: 1px solid var(--color-paper);
+    }
+    .brd-key-sw--past {
+      background: #191922;
+      box-shadow: inset 0 0 0 1px #2a2a36;
+    }
+  }
+
+  @media (pointer: coarse) {
+    .brd-foot .btn {
+      height: 2.75rem;
+    }
+  }
   .brd-foot {
     display: flex;
     flex-wrap: wrap;
@@ -542,6 +758,19 @@
     }
   }
 
+  @keyframes brd-scan {
+    from {
+      background-position: 100% 0;
+    }
+    to {
+      background-position: -120% 0;
+    }
+  }
+  @keyframes brd-stripe {
+    from {
+      transform: skewX(var(--slant)) scaleY(0);
+    }
+  }
   @keyframes brd-blink {
     50% {
       opacity: 0.25;
@@ -549,8 +778,10 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .brd-colon i {
-      animation: none;
+    .brd-colon i,
+    .brd-prog,
+    .brd-mk::before {
+      animation: none !important;
     }
     .brd-row,
     .brd-c {

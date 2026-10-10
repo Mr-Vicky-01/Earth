@@ -6,6 +6,7 @@
   .prg-intro {
     display: grid;
     gap: clamp(1.25rem, 2.4vw, 2rem);
+    overflow-x: clip;
     padding-top: clamp(6rem, 12vw, 11rem);
     padding-bottom: clamp(2.5rem, 5vw, 4.5rem);
   }
@@ -84,7 +85,6 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    --prg-w: 75;
   }
   .prg-slot {
     position: relative;
@@ -129,8 +129,8 @@
     --w: 110;
     line-height: 0.8;
     white-space: nowrap;
-    color: transparent;
-    -webkit-text-stroke: 1.5px var(--line);
+    color: rgb(239 238 233 / 0.08);
+    -webkit-text-stroke: 2px rgb(239 238 233 / 0.42);
     pointer-events: none;
     user-select: none;
   }
@@ -140,13 +140,20 @@
     }
   }
   .prg-p-vl .prg-water {
-    -webkit-text-stroke-color: rgb(239 238 233 / 0.3);
+    color: rgb(239 238 233 / 0.09);
+    -webkit-text-stroke-color: rgb(239 238 233 / 0.45);
   }
   .prg-p-en .prg-water {
-    -webkit-text-stroke-color: rgb(10 10 16 / 0.3);
+    color: rgb(10 10 16 / 0.08);
+    -webkit-text-stroke-color: rgb(10 10 16 / 0.4);
+  }
+  .prg-p-rc .prg-water {
+    color: rgb(10 10 16 / 0.05);
+    -webkit-text-stroke-color: rgb(10 10 16 / 0.22);
   }
   .prg-p-ff .prg-water {
-    -webkit-text-stroke-color: rgb(255 75 31 / 0.32);
+    color: rgb(255 75 31 / 0.08);
+    -webkit-text-stroke-color: rgb(255 75 31 / 0.5);
   }
 
   /* copy column */
@@ -159,8 +166,7 @@
     min-width: 0;
   }
   .prg-title.t-lg {
-    --w: var(--prg-w, 75);
-    font-size: clamp(3.4rem, 16.5vw, 6.25rem);
+    font-size: clamp(2.6rem, 12vw, 4.5rem);
     line-height: 0.82;
   }
   .prg-p-ff .prg-title .d-line:last-child {
@@ -284,7 +290,7 @@
 
   /* shared readout type */
   .prg-k {
-    font-size: 0.62rem;
+    font-size: 0.65rem;
     color: var(--mute);
   }
   .prg-k b {
@@ -304,7 +310,13 @@
       font-size: 15cqi;
     }
     .prg-vl-read .prg-k {
-      font-size: 0.56rem;
+      font-size: 0.625rem;
+    }
+    .prg-bars .prg-bar .prg-bar-l {
+      display: none;
+    }
+    .prg-bars .prg-bar .prg-bar-s {
+      display: block;
     }
   }
   .prg-big {
@@ -318,6 +330,10 @@
   .prg-big-n {
     display: inline-block;
     font-variant-numeric: tabular-nums;
+    transition: opacity 0.2s linear;
+  }
+  .prg-big-n.is-idle {
+    opacity: 0.32;
   }
   .prg-big small,
   .prg-mid small,
@@ -419,7 +435,7 @@
     position: absolute;
     left: 6px;
     top: calc(100% + 2px);
-    font-size: 0.56rem;
+    font-size: 0.625rem;
     font-style: normal;
     color: var(--color-heat);
     white-space: nowrap;
@@ -466,12 +482,15 @@
   }
   .prg-bar span {
     position: absolute;
-    left: 0;
-    right: 0;
+    left: -4px;
+    right: -4px;
     top: calc(100% + 4px);
-    font-size: 0.56rem;
+    font-size: 0.625rem;
     text-align: center;
     color: var(--mute);
+  }
+  .prg-bar .prg-bar-s {
+    display: none;
   }
   .prg-bar.is-hot i {
     background: var(--color-heat);
@@ -705,6 +724,9 @@
     .prg-copy {
       justify-content: space-between;
     }
+    .prg-title {
+      transform-origin: 0% 100%;
+    }
     .prg-viz {
       height: auto;
     }
@@ -792,7 +814,10 @@
       flex-direction: row;
       gap: 2vw;
       width: max-content;
-      padding-inline: clamp(16px, 4vw, 64px);
+      padding-inline: max(clamp(16px, 4vw, 64px), calc((100vw - 1600px) / 2 + 64px));
+      will-change: transform;
+    }
+    .prg-title {
       will-change: transform;
     }
     .prg-slot {
