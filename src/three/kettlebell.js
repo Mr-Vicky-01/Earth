@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 
 /**
- * Procedural competition kettlebell (28 kg, which competition colour-coding makes orange). Units: bell radius = 1.
+ * Procedural competition kettlebell (28 kg, satin silver steel). Units: bell radius = 1.
  * - Body: lathe of a sphere with a flat machined base; the upper half is slightly squashed toward the horns.
  * - Handle: one cast piece, a rounded "window" whose horns thicken into fillets where they meet the body.
  * - Front badge: "28 KG" plate on the lower front of the belly (canvas texture on a sphere patch).
@@ -11,6 +11,13 @@ export const KB_BASE_Y = -0.9
 export const KB_TOP_Y = 1.92
 /** Shift that centres the whole object (base → top of handle) on the group origin. */
 export const KB_CENTER_Y = (KB_BASE_Y + KB_TOP_Y) / 2
+
+/** Overall height of the bell, base to the top of the handle (tube radius included). */
+export const KB_HEIGHT = 1.965 - KB_BASE_Y
+/** Lower edge of the badge on the sphere (y, z in bell units); used to keep it clear of the headline on phones. */
+export const KB_BADGE_BOTTOM_Y = Math.cos(1.62 + 0.6)
+export const KB_BADGE_BOTTOM_Z = Math.sin(1.62 + 0.6)
+const BADGE_TURN = 0.35 // rad
 
 const SHOULDER = 0.9 // vertical squash of the upper hemisphere
 const T_FOOT = Math.asin(-0.86) // where the sphere meets the flat base
@@ -124,8 +131,10 @@ export function createKettlebellGeometry() {
   const foot = new THREE.CylinderGeometry(R_FOOT + 0.012, R_FOOT - 0.03, 0.07, 128, 1, true)
   foot.translate(0, KB_BASE_Y + 0.035, 0)
 
-  // badge patch on the lower front of the belly (pure sphere there, radius 1)
-  const label = new THREE.SphereGeometry(1.006, 56, 28, Math.PI / 2 - 0.56, 1.12, 1.62, 0.6)
+  // badge patch on the lower front of the belly (pure sphere there, radius 1). It is turned BADGE_TURN toward
+  // camera-right of the handle plane, so at the 3/4 showcase angle the badge faces the lens squarely and sits
+  // clear of the headline that overlaps the bell's lower-left edge on desktop.
+  const label = new THREE.SphereGeometry(1.006, 56, 28, Math.PI / 2 - 0.56 + BADGE_TURN, 1.12, 1.62, 0.6)
 
   return { body, handle, foot, label }
 }

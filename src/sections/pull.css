@@ -7,7 +7,7 @@
   /* ---------------- header ---------------- */
   .pull-head {
     display: grid;
-    gap: 1.75rem 4rem;
+    gap: 1.25rem 4rem;
     align-items: end;
   }
   @media (min-width: 960px) {
@@ -16,13 +16,13 @@
     }
   }
   .pull-title {
-    margin-top: 1.4rem;
+    margin-top: 1.1rem;
   }
   .pull-title .d-line {
     transform-origin: 0 70%;
   }
   .pull-intro {
-    padding-bottom: 0.35rem;
+    padding-bottom: 0.25rem;
   }
   .pull-lead {
     color: var(--fg);
@@ -31,8 +31,8 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem 1.6rem;
-    margin: 1.6rem 0 0;
-    padding: 0.9rem 0 0;
+    margin: 1.3rem 0 0;
+    padding: 0.85rem 0 0;
     list-style: none;
     border-top: 1px solid var(--line);
   }
@@ -42,33 +42,82 @@
     white-space: nowrap;
   }
 
-  /* ---------------- readout ---------------- */
+  /* ---------------- the rig: readout strip, track, lane map, controls ---------------- */
+  .pull-rig {
+    margin-top: clamp(1.75rem, 3.4vw, 2.75rem);
+  }
+
+  /* readout strip: sits right on top of the track */
   .pull-readout {
-    margin-top: clamp(2.75rem, 6vw, 5rem);
     display: grid;
     border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
   }
-  @media (min-width: 960px) {
-    .pull-readout {
-      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-    }
+  .pull-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 0;
+  }
+  .pull-cell {
+    position: relative;
+    min-width: 0;
+    padding: 0.8rem 0.75rem 0.9rem 1rem;
+  }
+  .pull-stat + .pull-stat {
+    border-left: 1px solid var(--line);
   }
   .pull-speed {
-    min-width: 0;
-    padding: 1.1rem 0 1.3rem;
+    padding-left: 0;
   }
-  @media (min-width: 960px) {
+  .pull-stat.pull-rate {
+    grid-column: 1 / -1;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem 1.5rem;
+  }
+  @media (min-width: 640px) {
+    .pull-readout {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.55fr);
+    }
     .pull-speed {
-      padding-right: clamp(1.5rem, 3vw, 3rem);
+      padding-right: clamp(1rem, 2vw, 2rem);
       border-right: 1px solid var(--line);
     }
-  }
-  @media (max-width: 959px) {
-    .pull-speed {
-      border-bottom: 1px solid var(--line);
+    .pull-stat {
+      padding-left: clamp(1rem, 1.7vw, 1.6rem);
     }
   }
+  @media (min-width: 1100px) {
+    .pull-readout {
+      grid-template-columns: minmax(0, 1.3fr) minmax(0, 3.7fr);
+    }
+    .pull-stats {
+      grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.6fr);
+    }
+    .pull-stat.pull-rate {
+      grid-column: auto;
+      border-top: 0;
+      border-left: 1px solid var(--line);
+      flex-wrap: nowrap;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: space-between;
+    }
+  }
+  @media (max-width: 639px) {
+    .pull-speed {
+      padding-right: 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .pull-stat:first-child,
+    .pull-stat.pull-rate {
+      padding-left: 0;
+    }
+  }
+
   .pull-lab {
     display: flex;
     align-items: center;
@@ -106,12 +155,12 @@
   .pull-speed-row {
     display: flex;
     align-items: baseline;
-    gap: 0.8rem;
-    margin-top: 0.85rem;
+    gap: 0.7rem;
+    margin-top: 0.55rem;
   }
   .pull-speed-num {
-    --w: 66;
-    font-size: clamp(4.6rem, 9.4vw, 9.25rem);
+    --w: 64;
+    font-size: clamp(3.5rem, 5.3vw, 4.9rem);
     letter-spacing: -0.015em;
   }
   .pull-unit {
@@ -120,11 +169,11 @@
 
   /* speed meter: slanted bar segments, filled by live speed; heat beyond the elite line */
   .pull-meter {
-    margin-top: 1.2rem;
+    margin-top: 0.7rem;
   }
   .pull-meter-bar {
     position: relative;
-    height: 1.35rem;
+    height: 0.95rem;
   }
   .pull-meter-base,
   .pull-meter-paint {
@@ -147,28 +196,30 @@
   .pull-meter-in {
     position: absolute;
     inset: 0;
-    will-change: transform;
   }
   .pull-meter-fill {
     overflow: hidden;
-    transform: translate3d(-100%, 0, 0);
+    transform: translate(-100%, 0);
   }
   .pull-meter-in {
-    transform: translate3d(100%, 0, 0);
+    transform: translate(100%, 0);
   }
   .pull-meter-paint {
     background: linear-gradient(90deg, var(--fg) 52.63%, var(--color-heat) 52.63%);
   }
   .pull-meter-lane {
     position: absolute;
-    inset: -5px -3px;
+    inset: -4px -3px;
     overflow: hidden;
     pointer-events: none;
   }
   .pull-meter-peak {
     position: absolute;
     inset: 0 3px;
-    will-change: transform;
+    opacity: 0;
+  }
+  .pull-meter-peak.is-on {
+    opacity: 1;
   }
   .pull-meter-peak::before {
     content: "";
@@ -182,46 +233,39 @@
   }
   .pull-zones {
     position: relative;
-    height: 1.4rem;
-    margin-top: 0.45rem;
-    font-size: 0.6rem;
-    color: var(--mute);
+    height: 1.25rem;
+    margin-top: 0.3rem;
+    font-size: 0.66rem;
+    color: rgb(239 238 233 / 0.86);
+  }
+  .pull-zones .is-elite {
+    color: var(--fg);
   }
   .pull-zones span {
     position: absolute;
     top: 0;
     left: var(--at);
-    padding: 0.35rem 0 0 0.4rem;
+    padding: 0.3rem 0 0 0.4rem;
     border-left: 1px solid var(--line);
     line-height: 1;
     white-space: nowrap;
   }
 
-  .pull-stats {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    margin: 0;
-  }
-  .pull-stat {
-    position: relative;
-    min-width: 0;
-    padding: 1.1rem 0.75rem 1.2rem 1rem;
-  }
-  .pull-stat + .pull-stat {
-    border-left: 1px solid var(--line);
-  }
-  @media (min-width: 960px) {
-    .pull-stat {
-      padding-left: clamp(1.25rem, 2.2vw, 2.25rem);
-    }
-  }
-  @media (max-width: 959px) {
-    .pull-stat:first-child {
-      padding-left: 0;
-    }
-  }
   .pull-stat dt {
     color: var(--mute);
+  }
+  /* on a wide strip the numbers sit on the track's top edge, label at the top: a scoreboard */
+  @media (min-width: 640px) {
+    .pull-stat {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+  }
+  @media (min-width: 640px) and (max-width: 1099px) {
+    .pull-stat.pull-rate {
+      flex-direction: row;
+    }
   }
   .pull-stat dd {
     position: relative;
@@ -229,39 +273,26 @@
     flex-wrap: wrap;
     align-items: baseline;
     gap: 0.2rem 0.45rem;
-    margin: 0.85rem 0 0;
+    margin: 0.6rem 0 0;
   }
   .pull-num {
     --w: 68;
-    font-size: clamp(2.2rem, 3.9vw, 3.9rem);
+    font-size: clamp(1.9rem, 3.2vw, 3.3rem);
     line-height: 1; /* same line box as the Odometer, so every stat sits on one baseline */
-  }
-  .pull-stat.pull-rate {
-    grid-column: 1 / -1;
-    border-left: 0;
-    border-top: 1px solid var(--line);
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem 1.5rem;
-    padding-left: 0;
-  }
-  @media (min-width: 960px) {
-    .pull-stat.pull-rate {
-      padding-left: clamp(1.25rem, 2.2vw, 2.25rem);
-    }
   }
   .pull-stat.pull-rate dd {
     margin: 0;
   }
+
   .pull-rating {
     --w: 92;
     position: relative;
     isolation: isolate;
     display: inline-block;
-    padding: 0.06em 0.18em 0.02em;
-    font-size: clamp(1.9rem, 3.3vw, 3.4rem);
+    padding: 0.08em 0.2em 0.04em;
+    margin-left: -0.2em;
+    font-size: clamp(1.45rem, 2.3vw, 2.4rem);
+    line-height: 1;
     white-space: nowrap;
   }
   .pull-rating::before {
@@ -284,54 +315,16 @@
     transform: skewX(var(--slant)) scaleX(1);
   }
 
-  /* NEW BEST stamp */
-  .pull-stamp {
-    position: absolute;
-    right: -0.4rem;
-    bottom: calc(100% + 0.15rem);
-    z-index: 3;
-    isolation: isolate;
-    display: inline-flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.2rem;
-    padding: 0.42rem 0.85rem 0.5rem;
-    color: var(--color-ink);
-    pointer-events: none;
-    visibility: hidden;
-    opacity: 0;
-    transform: rotate(-5deg);
-    transform-origin: 100% 60%;
-  }
-  .pull-stamp::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    background: var(--color-heat);
-    outline: 2px solid var(--color-ink);
-    outline-offset: -5px;
-    transform: skewX(var(--slant));
-  }
-  .pull-stamp .d {
-    --w: 96;
-    font-size: clamp(1.05rem, 1.55vw, 1.55rem);
-    line-height: 0.9;
-    white-space: nowrap;
-  }
-  .pull-stamp .mono {
-    font-size: 0.58rem;
-    white-space: nowrap;
-  }
-
   /* ---------------- track ---------------- */
   .pull-track-wrap {
-    margin-top: clamp(1.75rem, 3.5vw, 3rem);
+    position: relative;
   }
   .pull-track {
     --sl: 63.8px;
-    --sled-h: 94px;
-    --sled-w: 146px;
+    --sled-h: 98px;
+    --sled-w: 172px;
+    --hdl-w: 90px;
+    --hdl-h: 58px;
     position: relative;
     height: 300px;
     overflow: hidden;
@@ -344,8 +337,10 @@
   @media (max-width: 639px) {
     .pull-track {
       --sl: 0px;
-      --sled-h: 44px;
-      --sled-w: 68px;
+      --sled-h: 45px;
+      --sled-w: 79px;
+      --hdl-w: 64px;
+      --hdl-h: 48px;
       height: 220px;
       margin-inline: calc(-1 * clamp(16px, 4vw, 64px));
       clip-path: none;
@@ -354,37 +349,57 @@
   .pull-stage {
     position: absolute;
     inset: 0;
-    will-change: transform;
   }
-  .pull-turf {
+
+  /* the turf: one wide layer in world metres (x0 + m·ppm), scrolled by the camera */
+  .pull-world {
     position: absolute;
-    inset: 0;
-    will-change: transform;
-    background: linear-gradient(90deg, var(--color-ink) 50%, #12121b 50%) var(--x0, 0) 0 / calc(var(--ppm, 30px) * 10)
-      100% repeat-x;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 0;
+    transform-origin: 0 50%;
+  }
+  .pull-world > * {
+    position: absolute;
+  }
+  .pull-bay,
+  .pull-mow,
+  .pull-runoff {
+    top: 0;
+    bottom: 0;
   }
   .pull-bay {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: var(--x0, 0);
+    left: calc(var(--x0, 0px) - var(--bay, 0px));
+    width: var(--bay, 0px);
     background: repeating-linear-gradient(-78deg, rgb(239 238 233 / 0.07) 0 2px, transparent 2px 13px);
   }
+  .pull-mow {
+    left: var(--x0, 0px);
+    width: calc(var(--ppm, 0px) * 30);
+    background: linear-gradient(90deg, #0b0b12 50%, #14141e 50%) 0 0 / calc(var(--ppm, 30px) * 10) 100% repeat-x;
+  }
   .pull-runoff {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    right: 0;
-    left: calc(var(--x0, 0px) + var(--span, 0px));
-    background: repeating-linear-gradient(-78deg, rgb(255 75 31 / 0.16) 0 2px, transparent 2px 11px);
+    left: calc(var(--x0, 0px) + var(--ppm, 0px) * 30);
+    width: var(--bay, 0px);
+    background: repeating-linear-gradient(-78deg, rgb(255 75 31 / 0.2) 0 2px, transparent 2px 11px);
+  }
+  .is-hit .pull-runoff {
+    animation: pull-hit 0.8s ease-out;
+  }
+  @keyframes pull-hit {
+    from {
+      background-color: rgb(255 75 31 / 0.6);
+    }
+    to {
+      background-color: transparent;
+    }
   }
   .pull-lane {
-    position: absolute;
-    left: 0;
-    right: 0;
+    left: calc(var(--x0, 0px) - var(--bay, 0px));
+    width: calc(var(--bay, 0px) * 2 + var(--ppm, 0px) * 30);
     height: 2px;
-    background: repeating-linear-gradient(90deg, rgb(239 238 233 / 0.2) 0 18px, transparent 18px 30px);
+    background: repeating-linear-gradient(90deg, rgb(239 238 233 / 0.24) 0 18px, transparent 18px 30px);
   }
   .pull-lane.is-a {
     top: 24%;
@@ -392,117 +407,81 @@
   .pull-lane.is-b {
     top: 76%;
   }
+  /* a ruler mark every metre along both edges: it streams past when the camera moves */
+  .pull-minor {
+    left: var(--x0, 0px);
+    width: calc(var(--ppm, 0px) * 30 + 1px);
+    height: 11px;
+    background: repeating-linear-gradient(
+      90deg,
+      rgb(239 238 233 / 0.34) 0 1.5px,
+      transparent 1.5px var(--ppm, 30px)
+    );
+  }
+  .pull-minor.is-top {
+    top: 0;
+  }
+  .pull-minor.is-bot {
+    bottom: 0;
+  }
   .pull-paint {
-    --w: 110;
-    position: absolute;
-    top: 5%;
-    left: calc(var(--x0, 0px) + var(--ppm, 0px) * var(--m));
-    transform: translateX(-50%);
-    font-size: clamp(2.3rem, 4vw, 3.9rem);
+    --w: 112;
+    top: 7%;
+    left: calc(var(--x0, 0px) + var(--ppm, 0px) * var(--m) - 0.12em);
+    translate: -100% 0;
+    font-size: clamp(2.6rem, 4.6vw, 4.6rem);
     color: transparent;
-    -webkit-text-stroke: 1.5px rgb(239 238 233 / 0.13);
+    -webkit-text-stroke: 1.5px rgb(239 238 233 / 0.16);
     pointer-events: none;
   }
   .pull-tick {
-    position: absolute;
     top: 0;
     bottom: 0;
     left: calc(var(--x0, 0px) + var(--ppm, 0px) * var(--m));
     width: 1px;
-    background: rgb(239 238 233 / 0.09);
+    background: rgb(239 238 233 / 0.1);
   }
   .pull-tick.is-ten {
-    background: rgb(239 238 233 / 0.2);
+    background: rgb(239 238 233 / 0.24);
   }
   .pull-tick span {
     position: absolute;
-    bottom: 0.65rem;
-    left: 0.45rem;
-    font-size: 0.6rem;
-    color: rgb(239 238 233 / 0.6);
+    bottom: 1.15rem;
+    left: 0.5rem;
+    font-size: 0.66rem;
+    color: rgb(239 238 233 / 0.72);
     white-space: nowrap;
+  }
+  .pull-tick.is-ten span {
+    color: var(--color-paper);
   }
   .pull-tick.is-end span {
     left: auto;
-    right: 0.75rem;
+    right: 0.8rem;
     color: var(--color-heat);
   }
-  @media (max-width: 639px) {
-    .pull-tick.is-five span {
-      display: none;
-    }
-    .pull-paint {
-      font-size: 1.7rem;
-      top: 7%;
-    }
-  }
-
-  /* sensor status, top right of the lane */
-  .pull-status {
-    position: absolute;
-    top: 0.7rem;
-    right: 1.5rem;
-    z-index: 3;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin: 0;
-    font-size: 0.6rem;
-    color: rgb(239 238 233 / 0.7);
-    pointer-events: none;
-  }
-  .pull-status-dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    background: var(--color-paper);
-    transform: skewX(var(--slant));
-    opacity: 0.6;
-  }
-  .pull-status-t {
-    display: none;
-  }
-  .pull-status[data-state="idle"] .is-idle,
-  .pull-status[data-state="live"] .is-live,
-  .pull-status[data-state="done"] .is-done {
-    display: inline;
-  }
-  .pull-status[data-state="live"] {
-    color: var(--color-paper);
-  }
-  .pull-status[data-state="live"] .pull-status-dot {
-    background: var(--color-heat);
-    opacity: 1;
-    animation: pull-blink 0.5s steps(2, jump-none) infinite;
-  }
-  .pull-status[data-state="done"] .pull-status-dot {
-    background: var(--color-heat);
-    opacity: 1;
-  }
-  @media (max-width: 639px) {
-    .pull-status {
-      display: none;
-    }
-  }
   .pull-start {
-    position: absolute;
     top: 0;
     bottom: 0;
     left: calc(var(--x0, 0px) - 1.5px);
     width: 3px;
     background: var(--color-paper);
   }
-  .pull-start span {
+  .pull-start span,
+  .pull-finish span {
     position: absolute;
-    top: 0.7rem;
+    top: 1.05rem;
+    font-size: 0.62rem;
+    white-space: nowrap;
+  }
+  .pull-start span {
     left: 0.6rem;
-    font-size: 0.6rem;
     color: var(--color-paper);
   }
   .pull-finish {
-    position: absolute;
     top: 0;
     bottom: 0;
-    left: calc(var(--x0, 0px) + var(--span, 0px) - 5px);
+    left: calc(var(--x0, 0px) + var(--ppm, 0px) * 30 - 5px);
     width: 10px;
     background: conic-gradient(
         var(--color-paper) 25%,
@@ -512,65 +491,31 @@
       )
       0 0 / 10px 10px;
   }
+  .pull-finish span {
+    left: calc(100% + 0.6rem);
+    color: var(--color-heat);
+  }
   .pull-trail {
-    position: absolute;
     left: calc(var(--x0, 0px) - var(--sledw, 0px));
-    width: var(--span, 0px);
-    top: calc(50% - var(--sled-h) * 0.46);
-    height: calc(var(--sled-h) * 0.92);
+    width: calc(var(--ppm, 0px) * 30);
+    top: calc(50% - var(--sled-h) * 0.5);
+    height: var(--sled-h);
     background:
-      linear-gradient(rgb(239 238 233 / 0.1), rgb(239 238 233 / 0.1)) 0 0 / 100% 3px no-repeat,
-      linear-gradient(rgb(239 238 233 / 0.1), rgb(239 238 233 / 0.1)) 0 100% / 100% 3px no-repeat;
+      linear-gradient(rgb(239 238 233 / 0.1), rgb(239 238 233 / 0.1)) 0 100% / 100% 3px no-repeat,
+      linear-gradient(rgb(255 75 31 / 0.18), rgb(255 75 31 / 0.18)) 0 calc(100% - 7px) / 100% 2px no-repeat;
     transform-origin: 0 50%;
     transform: scaleX(0);
-    will-change: transform;
-  }
-  .pull-prog {
-    position: absolute;
-    left: var(--x0, 0px);
-    bottom: 0;
-    width: var(--span, 0px);
-    height: 4px;
-    background: var(--color-heat);
-    transform-origin: 0 50%;
-    transform: scaleX(0);
-    will-change: transform;
-  }
-  .pull-smear {
-    position: absolute;
-    left: 0;
-    top: calc(50% - var(--sled-h) * 0.4);
-    width: calc(var(--sled-w) * 3.2);
-    height: calc(var(--sled-h) * 0.8);
-    margin-left: calc(var(--sled-w) * -3.2);
-    background: linear-gradient(90deg, transparent, rgb(255 75 31 / 0.18) 55%, rgb(255 75 31 / 0.5));
-    transform-origin: 100% 50%;
-    opacity: 0;
-    pointer-events: none;
-    will-change: transform, opacity;
-    -webkit-mask: repeating-linear-gradient(180deg, #000 0 3px, transparent 3px 7px);
-    mask: repeating-linear-gradient(180deg, #000 0 3px, transparent 3px 7px);
-  }
-  .pull-fx {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-    will-change: transform;
   }
 
-  /* peak flag: planted on the turf where the sled was fastest */
+  /* peak flag: planted on the turf where the sled was fastest (rides with the turf) */
   .pull-flag {
-    position: absolute;
-    left: 0;
+    left: var(--x0, 0px);
     top: calc(50% + var(--sled-h) * 0.5 + 8px);
-    height: 2.5rem;
+    height: 2.4rem;
     width: 0;
     opacity: 0;
     transition: opacity 0.25s;
     pointer-events: none;
-    will-change: transform;
   }
   .pull-flag.is-on {
     opacity: 1;
@@ -590,7 +535,7 @@
     bottom: 0;
     isolation: isolate;
     padding: 0.22rem 0.5rem;
-    font-size: 0.6rem;
+    font-size: 0.62rem;
     color: var(--color-ink);
     white-space: nowrap;
   }
@@ -606,7 +551,36 @@
     font-weight: 600;
   }
 
-  /* rope */
+  /* screen layer: smear, speed lines, rope, sled, handle */
+  .pull-smear {
+    position: absolute;
+    left: 0;
+    top: calc(50% - var(--sled-h) * 0.42);
+    width: calc(var(--sled-w) * 3.4);
+    height: calc(var(--sled-h) * 0.84);
+    margin-left: calc(var(--sled-w) * -3.4);
+    background: linear-gradient(90deg, transparent, rgb(255 75 31 / 0.22) 55%, rgb(255 75 31 / 0.62));
+    transform-origin: 100% 50%;
+    opacity: 0;
+    pointer-events: none;
+    -webkit-mask: repeating-linear-gradient(180deg, #000 0 3px, transparent 3px 7px);
+    mask: repeating-linear-gradient(180deg, #000 0 3px, transparent 3px 7px);
+  }
+  .pull-fx {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  .is-live .pull-sled,
+  .is-live .pull-smear,
+  .is-live .pull-fx,
+  .is-live .pull-chip,
+  .is-live .pull-world {
+    will-change: transform;
+  }
+
   .pull-rope {
     position: absolute;
     inset: 0;
@@ -614,18 +588,17 @@
     height: 100%;
     overflow: visible;
     pointer-events: none;
-    will-change: transform;
   }
   .pull-rope-base {
     fill: none;
     stroke: var(--color-chrome);
-    stroke-width: 4;
+    stroke-width: calc(var(--rw, 4) * 1px);
     transition: stroke 0.12s;
   }
   .pull-rope-braid {
     fill: none;
     stroke: var(--color-ink);
-    stroke-width: 4;
+    stroke-width: calc(var(--rw, 4) * 1px);
     stroke-dasharray: 2 5;
     opacity: 0.5;
   }
@@ -633,7 +606,6 @@
     stroke: var(--color-heat);
   }
 
-  /* sled */
   .pull-sled {
     position: absolute;
     left: 0;
@@ -642,26 +614,25 @@
     height: var(--sled-h);
     margin-top: calc(var(--sled-h) * -0.5);
     transform-origin: 100% 50%;
-    will-change: transform;
     pointer-events: none;
   }
   .pull-sled svg {
     display: block;
     width: 100%;
     height: 100%;
+    overflow: visible;
   }
 
   /* live speed chip riding above the sled */
   .pull-chip {
     position: absolute;
     left: 0;
-    bottom: calc(50% + var(--sled-h) * 0.5 + 10px);
+    bottom: calc(50% + var(--sled-h) * 0.5 + 8px);
     opacity: 0;
     transition: opacity 0.2s;
     pointer-events: none;
-    will-change: transform;
   }
-  .pull-chip.is-on {
+  .is-live .pull-chip {
     opacity: 1;
   }
   .pull-chip-in {
@@ -671,7 +642,7 @@
     align-items: center;
     gap: 0.3rem;
     padding: 0.25rem 0.6rem;
-    font-size: 0.64rem;
+    font-size: 0.66rem;
     color: var(--color-paper);
     white-space: nowrap;
     transform: translateX(-100%);
@@ -682,7 +653,7 @@
     inset: 0;
     z-index: -1;
     background: var(--color-ink-3);
-    border: 1px solid rgb(239 238 233 / 0.28);
+    border: 1px solid rgb(239 238 233 / 0.3);
     transform: skewX(var(--slant));
   }
 
@@ -692,15 +663,14 @@
     left: 0;
     top: 50%;
     z-index: 2;
-    width: 90px;
-    height: 58px;
-    margin-top: -29px;
+    width: var(--hdl-w);
+    height: var(--hdl-h);
+    margin-top: calc(var(--hdl-h) * -0.5);
     padding: 0;
     border: 0;
     background: none;
     color: var(--color-ink);
     cursor: grab;
-    will-change: transform;
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
@@ -727,7 +697,6 @@
     display: flex;
     align-items: center;
     transform-origin: 0 50%;
-    will-change: transform;
   }
   .pull-grip-loop {
     flex: none;
@@ -766,6 +735,16 @@
   .pull-handle.is-taut .pull-grip-plate::before {
     background: var(--color-paper);
   }
+  /* the sled tore the handle away: a heat flash on the grip */
+  .pull-handle.is-rip .pull-grip-plate {
+    animation: pull-rip 0.45s var(--ease-expo);
+  }
+  @keyframes pull-rip {
+    from {
+      transform: scale(1.3) skewX(-14deg);
+      filter: brightness(1.6);
+    }
+  }
   .pull-grip-txt {
     --w: 92;
     font-size: 1.4rem;
@@ -776,11 +755,6 @@
     font-size: 1.15rem;
   }
   @media (max-width: 639px) {
-    .pull-handle {
-      width: 66px;
-      height: 50px;
-      margin-top: -25px;
-    }
     .pull-grip-loop {
       width: 8px;
       height: 16px;
@@ -792,26 +766,21 @@
     .pull-grip .speed-glyph {
       display: none;
     }
-    .pull-rope-base,
-    .pull-rope-braid {
-      stroke-width: 3;
-    }
   }
 
   /* idle hint above the handle */
   .pull-hint {
     position: absolute;
     left: 0;
-    bottom: calc(50% + 29px + 0.55rem);
+    bottom: calc(50% + var(--hdl-h) * 0.5 + 0.5rem);
     pointer-events: none;
-    will-change: transform;
   }
   .pull-hint-in {
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
     padding-left: 1.1rem;
-    font-size: 0.64rem;
+    font-size: 0.66rem;
     color: var(--color-heat);
     white-space: nowrap;
   }
@@ -820,15 +789,153 @@
     height: 14px;
   }
 
+  /* heat flashes on the lane edges (new rating, end hit) */
+  .pull-edge {
+    position: absolute;
+    left: 0;
+    right: 0;
+    z-index: 3;
+    height: 4px;
+    background: var(--color-heat);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .pull-edge.is-top {
+    top: 0;
+    transform-origin: 50% 0;
+  }
+  .pull-edge.is-bot {
+    bottom: 0;
+    transform-origin: 50% 100%;
+  }
+
+  /* NEW BEST: slammed onto the turf, top right */
+  .pull-stamp {
+    position: absolute;
+    top: 1.7rem;
+    right: calc(var(--sl) + 2.6rem);
+    z-index: 4;
+    isolation: isolate;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.22rem;
+    padding: 0.5rem 1rem 0.55rem;
+    color: var(--color-ink);
+    pointer-events: none;
+    visibility: hidden;
+    opacity: 0;
+    transform: rotate(-6deg);
+    transform-origin: 100% 60%;
+  }
+  .pull-stamp::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: var(--color-heat);
+    outline: 2px solid var(--color-ink);
+    outline-offset: -5px;
+    transform: skewX(var(--slant));
+  }
+  .pull-stamp .d {
+    --w: 96;
+    font-size: clamp(1.15rem, 1.8vw, 1.8rem);
+    line-height: 0.9;
+    white-space: nowrap;
+  }
+  .pull-stamp .mono {
+    font-size: 0.6rem;
+    white-space: nowrap;
+  }
+  @media (max-width: 639px) {
+    .pull-stamp {
+      top: 0.7rem;
+      right: 0.9rem;
+      padding: 0.4rem 0.8rem 0.45rem;
+    }
+  }
+
+  /* ---------------- lane map: the whole 30 m, the reach, and what the camera shows ---------------- */
+  .pull-map {
+    margin-top: 0.85rem;
+  }
+  .pull-map-bar {
+    position: relative;
+    height: 10px;
+    background: linear-gradient(var(--line), var(--line)) 0 50% / 100% 2px no-repeat;
+  }
+  /* what the track shows right now: a pale window that slides as the camera follows */
+  .pull-map-win {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 100%;
+    transform-origin: 0 50%;
+    background: rgb(239 238 233 / 0.16);
+  }
+  .pull-map-fill {
+    position: absolute;
+    left: 0;
+    top: 3px;
+    width: 100%;
+    height: 4px;
+    background: var(--color-heat);
+    transform-origin: 0 50%;
+    transform: scaleX(0);
+  }
+  .pull-map-sled {
+    position: absolute;
+    left: -3px;
+    top: -6px;
+    width: 6px;
+    height: 22px;
+  }
+  .pull-map-sled::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--fg);
+    transform: skewX(var(--slant));
+  }
+  .pull-map-labels {
+    position: relative;
+    height: 1rem;
+    margin-top: 0.5rem;
+    font-size: 0.62rem;
+    color: var(--mute);
+  }
+  .pull-map-labels span {
+    position: absolute;
+    top: 0;
+    white-space: nowrap;
+  }
+  .pull-map-labels span:nth-child(1) {
+    left: 0;
+  }
+  .pull-map-labels span:nth-child(2) {
+    left: 33.333%;
+    translate: -50% 0;
+  }
+  .pull-map-labels span:nth-child(3) {
+    left: 66.667%;
+    translate: -50% 0;
+  }
+  .pull-map-labels span:nth-child(4) {
+    right: 0;
+    color: var(--fg);
+  }
+
   /* ---------------- controls ---------------- */
   .pull-controls {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem 2rem;
-    min-height: 3.25rem;
-    margin-top: 1.25rem;
+    gap: 0.75rem 2rem;
+    min-height: 3rem;
+    margin-top: 0.9rem;
   }
   .pull-help {
     max-width: 62ch;
@@ -849,14 +956,17 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .is-live .pull-dot,
-    .pull-status[data-state="live"] .pull-status-dot {
+    .is-live .pull-dot {
       animation: none;
     }
     .pull-rating::before,
     .pull-grip-plate,
     .pull-lab-live {
       transition-duration: 0.01ms;
+    }
+    .is-hit .pull-runoff,
+    .pull-handle.is-rip .pull-grip-plate {
+      animation: none;
     }
   }
 }

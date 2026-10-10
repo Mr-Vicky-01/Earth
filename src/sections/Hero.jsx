@@ -12,7 +12,7 @@ import './hero.css'
 const HeroScene = lazy(() => import('../three/HeroScene.jsx').then((m) => ({ default: m.HeroScene })))
 
 const OMEGA_MAX = 45 // rad/s
-// At rest the bell settles into a 3/4 view with the handle and the 24 KG mark facing the camera and sways gently.
+// At rest the bell settles into a 3/4 view with the handle and the 28 KG mark facing the camera and sways gently.
 // It never idles side-on: the handle is a flat arch, and edge-on it reads as a single post.
 const SHOWCASE = -0.38 // rad
 const SWAY = 0.2 // rad either side of the showcase angle while idle
@@ -22,6 +22,8 @@ const INTRO_TURNS = 3 // full turns the bell spins through while dropping out of
 const RPM_HOT = 120
 const WARP_HOT = 3
 const WARP_MAX = 16
+const SCENE_WAIT = 1200 // ms after `ready` that the page waits for the canvas before entering without it
+const STIR_MAX = 0.2 // energy a fast mouse pass over the hero can add (fine pointers)
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v)
 
@@ -37,6 +39,10 @@ export function Hero({ ready }) {
   const spinMeter = useRef(null)
   const warpMeter = useRef(null)
   const inView = useInView(root, '10% 0px')
+  const inViewRef = useRef(inView)
+  useEffect(() => {
+    inViewRef.current = inView
+  }, [inView])
   const [reduced] = useState(reducedMotion)
   const [lite] = useState(
     () => typeof window !== 'undefined' && (window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 700),
@@ -44,8 +50,10 @@ export function Hero({ ready }) {
 
   /*
    * Shared motion state, read by the WebGL scene every frame.
-   * angle/omega/tilt: kettlebell physics · energy 0..1 · warp: streak speed multiplier
-   * intro 0→1 (drop out of warp) · exit 0→1 (scroll away) · px/py pointer -1..1
+   * angle/omega/tilt: kettlebell physics · energy 0..1 (spin, or a fast mouse pass) · warp: streak speed multiplier
+   * intro 0→1 (drop out of warp) · burst 1→0 (late-scene warp kick) · pulse 0..1 (idle rep pulse)
+   * cue: extra settle angle for the one-off "it spins" wiggle · exit 0→1 (scroll away) · px/py pointer -1..1
+   * band: free vertical band between the top row and the headline (stacked layouts frame the bell into it)
    */
   const motion = useRef(null)
   if (!motion.current) {
@@ -57,73 +65,197 @@ export function Hero({ ready }) {
       tiltVel: 0,
       tiltTarget: 0,
       dragging: false,
+      engaged: false,
       lastMove: 0,
       energy: 0,
+      stir: 0,
       warp: 1,
       intro: reduced ? 1 : 0,
+      introStarted: reduced,
+      burst: 0,
+      pulse: 0,
+      cue: 0,
       exit: 0,
       px: 0,
       py: 0,
       rpm: 0,
       spin: 0,
+      band: null,
     }
   }
 
-  /* ---------------- entrance + scroll exit ---------------- */
-  // HTML furniture: hidden until ready, then yanked in from the left
+  /* ---------------- entrance: HTML and warp start in the same frame ---------------- */
+  // The page waits briefly for the canvas so the text and the drop out of warp land together. If the canvas is
+  // late (cold cache, slow GPU) the page enters on its own after SCENE_WAIT and the scene joins with a short kick.
+  const [sceneLive, setSceneLive] = useState(false)
+  const onSceneLive = useCallback(() => setSceneLive(true), [])
+  // the first frame compiles every shader and can block the main thread for a while: once it has been drawn,
+  // the scene is about to go live, so the page keeps waiting a little longer rather than entering without it
+  const drawn = useRef(false)
+  const onSceneFrame = useCallback(() => {
+    drawn.current = true
+  }, [])
+  const [waited, setWaited] = useState(false)
+  useEffect(() => {
+    if (!ready || sceneLive || reduced) return
+    let id = setTimeout(() => {
+      if (!drawn.current) setWaited(true)
+      else id = setTimeout(() => setWaited(true), SCENE_WAIT * 2)
+    }, SCENE_WAIT)
+    return () => clearTimeout(id)
+  }, [ready, sceneLive, reduced])
+  const go = ready && (reduced || sceneLive || waited)
+
+  // HTML furniture: hidden until go, then yanked in from the left
   useGSAP(
     () => {
       if (reduced) return
       const items = gsap.utils.toArray('[data-pull]', root.current)
-      if (!ready) {
+      if (!go) {
         gsap.set(items, PULL_FROM)
         return
       }
       gsap.fromTo(items, PULL_FROM, { ...PULL_TO, delay: 0.35 })
     },
-    { scope: root, dependencies: [ready] },
+    { scope: root, dependencies: [go] },
   )
 
-  // 3D "drop out of warp": waits for the first rendered frame so the move is never played to an empty canvas
-  const [sceneLive, setSceneLive] = useState(false)
-  const onSceneLive = useCallback(() => setSceneLive(true), [])
+  // 3D "drop out of warp"
+  const forced = useRef(false)
   useGSAP(
     () => {
       const m = motion.current
       if (reduced) {
         m.intro = 1
+        m.introStarted = true
         return
       }
-      if (!ready) {
+      if (!go) {
         m.intro = 0
+        m.introStarted = false
         return
       }
-      if (sceneLive) {
-        gsap.fromTo(m, { intro: 0 }, { intro: 1, duration: 1.6, ease: 'expo.out' })
+      m.introStarted = true
+      if (!sceneLive) {
+        // page entered without the canvas: the scene will join at rest
+        forced.current = true
+        m.intro = 1
         return
       }
-      // no WebGL (fallback) or a very slow load: don't leave the readout stuck at warp speed
-      gsap.delayedCall(4, () => {
-        if (m.intro === 0) m.intro = 1
-      })
+      if (forced.current) {
+        // the scene arrived after the page settled: a short warp kick, no camera replay
+        gsap.fromTo(m, { burst: 1 }, { burst: 0, duration: 0.6, ease: 'expo.out' })
+        return
+      }
+      gsap.fromTo(m, { intro: 0 }, { intro: 1, duration: 1.6, ease: 'expo.out' })
     },
-    { scope: root, dependencies: [ready, sceneLive] },
+    { scope: root, dependencies: [go, sceneLive] },
   )
 
+  /* ---------------- scroll exit: everything gets yanked out as the page accelerates ---------------- */
   useGSAP(
     () => {
       if (reduced) return
       const m = motion.current
+      const items = gsap.utils.toArray('[data-pull], .hero-title .d-line', root.current)
       const tl = gsap.timeline({
         defaults: { ease: 'none' },
         scrollTrigger: { trigger: root.current, start: 'top top', end: 'bottom top', scrub: true, invalidateOnRefresh: true },
       })
       tl.to(m, { exit: 1, duration: 1 }, 0)
         .to(ui.current, { y: () => -0.32 * window.innerHeight, duration: 1 }, 0)
-        .to(ui.current, { opacity: 0, duration: 0.55, ease: 'power1.in' }, 0.12)
+        .fromTo(
+          items,
+          { x: 0, skewX: 0, scaleX: 1, transformOrigin: '0% 50%' },
+          // front-loaded so the yank reads while the content is still on screen (it leaves at ≈55% progress)
+          { x: -220, skewX: -22, scaleX: 1.35, duration: 0.42, ease: 'power2.in', stagger: 0.02, immediateRender: false },
+          0.03,
+        )
+        // stays solid until it is nearly gone: no muddy half-transparent heat button over cobalt
+        .to(ui.current, { opacity: 0, duration: 0.15 }, 0.85)
     },
     { scope: root },
   )
+
+  /* ---------------- alive at rest: one "it spins" cue, then rep pulses every 4–6 s ---------------- */
+  useEffect(() => {
+    if (reduced || !go) return
+    const m = motion.current
+    const kick = root.current?.querySelectorAll('.hero-title .outline .ch') ?? []
+    let next = null
+    let tlPulse = null
+    let tlKick = null
+    let tlCue = null
+    const idle = () =>
+      inViewRef.current && !m.dragging && m.intro > 0.98 && m.exit < 0.02 && scroll.abs < 0.05 && Math.abs(m.omega) < FREE_SPIN
+    const pulse = () => {
+      if (idle()) {
+        tlPulse?.kill()
+        tlPulse = gsap
+          .timeline()
+          .to(m, { pulse: 1, duration: 0.15, ease: 'expo.out' })
+          .to(m, { pulse: 0, duration: 0.9, ease: 'power2.out' })
+        if (kick.length) {
+          // the outlined FAST. gets yanked forward with the rep and snaps back
+          tlKick?.kill()
+          tlKick = gsap
+            .timeline()
+            .to(kick, { x: 16, skewX: -16, duration: 0.14, ease: 'expo.out', stagger: 0.016 })
+            .to(kick, { x: 0, skewX: 0, duration: 0.75, ease: 'expo.out', stagger: 0.016 }, 0.16)
+        }
+      }
+      next = gsap.delayedCall(gsap.utils.random(4, 6), pulse)
+    }
+    const cue = () => {
+      // the bell wiggles once on its settle spring (never toward side-on), so it's obvious it can be spun
+      if (!m.engaged && idle()) {
+        tlCue = gsap
+          .timeline()
+          .to(m, { cue: 0.45, duration: 0.22, ease: 'power2.out' })
+          .to(m, { cue: -0.3, duration: 0.34, ease: 'power2.inOut' })
+          .to(m, { cue: 0, duration: 0.55, ease: 'power3.out' })
+      }
+      next = gsap.delayedCall(2.4, pulse)
+    }
+    next = gsap.delayedCall(2.1, cue)
+    return () => {
+      next?.kill()
+      tlPulse?.kill()
+      tlKick?.kill()
+      tlCue?.kill()
+      if (tlKick) gsap.set(kick, { x: 0, skewX: 0 })
+      m.pulse = 0
+      m.cue = 0
+    }
+  }, [go, reduced])
+
+  /* ---------------- stacked layouts: measure the free band above the headline (never per frame) ---------------- */
+  useEffect(() => {
+    const sec = root.current
+    const top = sec?.querySelector('.hero-top')
+    const foot = sec?.querySelector('.hero-foot')
+    const title = sec?.querySelector('.hero-title')
+    const hudEl = sec?.querySelector('.hero-hud')
+    if (!sec || !top || !foot || !title || !hudEl) return
+    const m = motion.current
+    // layout offsets, not rects: the entrance and scroll exit transform these elements
+    const offsetIn = (el, axis) => {
+      let v = 0
+      for (let n = el; n && n !== sec; n = n.offsetParent) v += axis === 'x' ? n.offsetLeft : n.offsetTop
+      return v
+    }
+    const measure = () => {
+      m.band = {
+        top: offsetIn(top) + top.offsetHeight,
+        bottom: offsetIn(title),
+        hudLeft: hudEl.offsetWidth ? offsetIn(hudEl, 'x') : 0,
+      }
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ;[sec, top, foot, title, hudEl].forEach((el) => ro.observe(el))
+    return () => ro.disconnect()
+  }, [])
 
   /* ---------------- drag to spin ---------------- */
   useEffect(() => {
@@ -159,6 +291,10 @@ export function Hero({ ready }) {
     const engage = (capture) => {
       engaged = true
       m.dragging = true
+      m.engaged = true
+      // the user found the interaction: drop the hint wiggle
+      gsap.killTweensOf(m, 'cue')
+      m.cue = 0
       el.classList.add('is-dragging')
       // touch is implicitly captured by the section already; re-capturing would fire lost/got capture
       if (!capture) return
@@ -214,7 +350,8 @@ export function Hero({ ready }) {
       m.angle += dx * k
       m.settle = null
       const inst = clamp(((dx * k) / dtMs) * 1000, -OMEGA_MAX, OMEGA_MAX)
-      m.omega += (inst - m.omega) * 0.4
+      // time-based smoothing: same feel whatever the pointer event rate
+      m.omega += (inst - m.omega) * (1 - Math.exp((-dtMs / 1000) * 30))
       m.lastMove = now
       m.tiltTarget = clamp((e.clientY - sy) * 0.0032, -0.42, 0.42)
       lx = e.clientX
@@ -240,12 +377,29 @@ export function Hero({ ready }) {
     el.addEventListener('pointercancel', onCancel)
     window.addEventListener('blur', onBlur)
 
-    // lean toward the pointer (desktop only)
+    // desktop: lean toward the pointer, and a fast pass over the hero stirs the warp
     let onLean = null
     if (finePointer()) {
+      let pt = 0
+      let px = 0
+      let py = 0
       onLean = (e) => {
         m.px = (e.clientX / window.innerWidth) * 2 - 1
         m.py = (e.clientY / window.innerHeight) * 2 - 1
+        if (reduced || m.dragging || !el.contains(e.target)) {
+          pt = 0
+          return
+        }
+        const t = stamp(e)
+        const dtMs = t - pt
+        if (pt && dtMs > 0 && dtMs < 120) {
+          const v = Math.hypot(e.clientX - px, e.clientY - py) / dtMs // px per ms
+          const s = Math.min(STIR_MAX, v / 15)
+          if (s > m.stir) m.stir = s
+        }
+        pt = t
+        px = e.clientX
+        py = e.clientY
       }
       window.addEventListener('pointermove', onLean, { passive: true })
     }
@@ -259,14 +413,16 @@ export function Hero({ ready }) {
       el.classList.remove('is-dragging')
       m.dragging = false
     }
-  }, [])
+  }, [reduced])
 
   /* ---------------- physics + HUD (gsap ticker, ~15 Hz text) ---------------- */
-  const hud = useRef({ acc: 0, rpm: -1, warp: '', hotR: null, hotW: null, prevSpin: null })
+  const hud = useRef({ acc: 0, rpm: -1, warp: '', hotR: null, hotW: null, prevIntro: null })
   useTicker((time, deltaMs) => {
     const m = motion.current
     const h = hud.current
-    const dt = Math.min(Math.max(deltaMs, 1), 50) / 1000
+    // gsap clock (lag smoothing is off, so this is real time); physics steps are clamped for stability
+    const realDt = Math.max(deltaMs, 1) / 1000
+    const dt = Math.min(realDt, 0.05)
 
     if (m.dragging) {
       // held still mid-drag → measured speed falls away quickly
@@ -281,7 +437,7 @@ export function Hero({ ready }) {
           const proj = m.angle + m.omega / 2.4
           m.settle = SHOWCASE + Math.round((proj - SHOWCASE) / TAU) * TAU
         }
-        const target = m.settle + (reduced ? 0 : Math.sin(time * 0.55) * SWAY)
+        const target = m.settle + (reduced ? 0 : Math.sin(time * 0.55) * SWAY) + m.cue
         // critically damped spring toward the showcase angle
         const K = 9
         m.omega += ((target - m.angle) * K - m.omega * 2 * Math.sqrt(K)) * dt
@@ -293,21 +449,25 @@ export function Hero({ ready }) {
     const cDamp = 11
     m.tiltVel += ((m.tiltTarget - m.tilt) * kSpring - m.tiltVel * cDamp) * dt
     m.tilt += m.tiltVel * dt
+    // mouse stir fades out
+    m.stir *= Math.exp(-realDt * 2.2)
 
     // spin-in on entrance: an extra angle that unwinds with intro (expo.out → fast then settles)
-    const introSpin = -(1 - m.intro) * Math.PI * 2 * INTRO_TURNS
-    const spin = m.angle + introSpin
-    const shown = h.prevSpin === null ? 0 : Math.abs(spin - h.prevSpin) / dt
-    h.prevSpin = spin
-    m.spin = spin
-    m.rpm += (shown * (60 / (2 * Math.PI)) - m.rpm) * 0.25
+    m.spin = m.angle - (1 - m.intro) * TAU * INTRO_TURNS
+    // shown spin speed, analytic: physics ω plus the rate the entrance unwinds, both on the gsap clock
+    const introRate = h.prevIntro === null ? 0 : ((m.intro - h.prevIntro) / realDt) * TAU * INTRO_TURNS
+    h.prevIntro = m.intro
+    const rpmNow = Math.abs(m.omega + introRate) * (60 / TAU)
+    m.rpm += (rpmNow - m.rpm) * (1 - Math.exp(-realDt * 18))
 
-    m.energy = Math.min(1, Math.abs(m.omega) / 30)
-    m.warp = Math.min(WARP_MAX, (1 + scroll.abs * 8 + m.energy * 6 + m.exit * 6) * (1 + 11 * (1 - m.intro)))
+    m.energy = Math.max(Math.min(1, Math.abs(m.omega) / 30), m.stir)
+    const cruise = 1 + scroll.abs * 8 + m.energy * 6 + m.exit * 6 + m.pulse * 3
+    m.warp = Math.min(WARP_MAX, cruise * (1 + 11 * (1 - m.intro)) + m.burst * 5)
+    const shownWarp = m.introStarted ? m.warp : 1
 
     // meters every frame (transform only)
     const eSpin = Math.min(1, m.rpm / 430)
-    const eWarp = Math.min(1, (m.warp - 1) / 14)
+    const eWarp = Math.min(1, (shownWarp - 1) / 14)
     if (spinMeter.current) spinMeter.current.style.transform = `scaleX(${eSpin.toFixed(3)})`
     if (warpMeter.current) warpMeter.current.style.transform = `scaleX(${eWarp.toFixed(3)})`
 
@@ -325,11 +485,11 @@ export function Hero({ ready }) {
         rpmRef.current.parentElement.parentElement.classList.toggle('is-hot', hot)
       }
     }
-    const w = m.warp.toFixed(1)
+    const w = shownWarp.toFixed(1)
     if (w !== h.warp && warpRef.current) {
       h.warp = w
       warpRef.current.textContent = w
-      const hot = m.warp >= WARP_HOT
+      const hot = shownWarp >= WARP_HOT
       if (hot !== h.hotW) {
         h.hotW = hot
         warpRef.current.parentElement.parentElement.classList.toggle('is-hot', hot)
@@ -337,7 +497,7 @@ export function Hero({ ready }) {
     }
   }, inView)
 
-  const go = (target) => (e) => {
+  const jump = (target) => (e) => {
     e.preventDefault()
     scrollToTarget(target)
   }
@@ -347,7 +507,14 @@ export function Hero({ ready }) {
       <div className="hero-canvas" aria-hidden="true">
         <SceneBoundary fallback={<SceneFallback />}>
           <Suspense fallback={null}>
-            <HeroScene motion={motion.current} active={inView} reduced={reduced} lite={lite} onLive={onSceneLive} />
+            <HeroScene
+              motion={motion.current}
+              active={inView}
+              reduced={reduced}
+              lite={lite}
+              onFrame={onSceneFrame}
+              onLive={onSceneLive}
+            />
           </Suspense>
         </SceneBoundary>
       </div>
@@ -356,7 +523,9 @@ export function Hero({ ready }) {
         <div className="hero-top">
           <p className="tag hero-tag" data-pull>
             <span className="live-dot" aria-hidden="true" />
-            Velocity lab · Open 24/7
+            <span className="hero-tag-text">
+              <span className="hero-tag-long">Velocity lab · </span>Open 24/7
+            </span>
           </p>
 
           <div className="hero-hud mono" aria-hidden="true">
@@ -382,7 +551,10 @@ export function Hero({ ready }) {
             </div>
             <div className="hero-hud-row hero-hud-hint" data-pull>
               <span className="hero-hud-k">
-                <span className="hero-hint-idle">Drag to spin</span>
+                <span className="hero-hint-idle">
+                  <span className="hero-hint-fine">Drag</span>
+                  <span className="hero-hint-coarse">Swipe</span> to spin
+                </span>
                 <span className="hero-hint-drag">Let go to fling</span>
               </span>
               <span className="hero-nudge">
@@ -397,7 +569,7 @@ export function Hero({ ready }) {
             as="h1"
             id="hero-title"
             className="d t-mega hero-title"
-            play={ready}
+            play={go}
             stretch
             skew
             width={72}
@@ -412,19 +584,19 @@ export function Hero({ ready }) {
             </p>
             <div className="hero-ctas">
               <div className="hero-cta" data-pull>
-                <SpeedButton href="#pricing" variant="heat" onClick={go('#pricing')}>
+                <SpeedButton href="#pricing" variant="heat" onClick={jump('#pricing')}>
                   Book a free session
                 </SpeedButton>
               </div>
               <div className="hero-cta" data-pull>
-                <SpeedButton href="#method" variant="line" onClick={go('#method')}>
+                <SpeedButton href="#method" variant="line" onClick={jump('#method')}>
                   See how it works
                 </SpeedButton>
               </div>
             </div>
           </div>
 
-          <a href="#method" className="hero-cue mono" onClick={go('#method')} aria-label="Scroll to how it works" data-pull>
+          <a href="#method" className="hero-cue mono" onClick={jump('#method')} aria-label="Scroll to how it works" data-pull>
             <span>Scroll</span>
             <span className="hero-cue-lines" aria-hidden="true">
               <i />

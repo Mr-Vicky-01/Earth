@@ -1,8 +1,9 @@
 @layer components {
   .hero {
     --hero-fs: clamp(4.6rem, min(17vw, 27svh), 19rem);
-    height: 100svh;
-    min-height: 680px;
+    /* grows instead of clipping when the content is taller than the screen */
+    height: auto;
+    min-height: max(680px, 100svh);
     overflow: clip;
     touch-action: pan-y;
     -webkit-tap-highlight-color: transparent;
@@ -23,9 +24,9 @@
 
   /* ---------- HTML layer ---------- */
   .hero-ui {
-    position: absolute;
-    inset: 0;
+    position: relative;
     z-index: 2;
+    min-height: inherit;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
@@ -50,9 +51,43 @@
     margin-left: 0.35rem;
   }
 
+  /* soft cobalt scrim: streaks fly behind the text without striking through words */
+  .hero-hud,
+  .hero-copy {
+    position: relative;
+    isolation: isolate;
+  }
+  .hero-hud::before,
+  .hero-copy::before {
+    content: "";
+    position: absolute;
+    inset: -2rem -3.5rem;
+    z-index: -1;
+    pointer-events: none;
+    background: radial-gradient(closest-side, rgb(34 54 252 / 0.84) 74%, rgb(34 54 252 / 0) 100%);
+  }
+  /* the tag already uses ::before for its skewed frame; its scrim sits one layer further back */
+  .hero-tag::after {
+    content: "";
+    position: absolute;
+    inset: -1.4rem -2.2rem;
+    z-index: -2;
+    pointer-events: none;
+    background: radial-gradient(closest-side, rgb(34 54 252 / 0.84) 70%, rgb(34 54 252 / 0) 100%);
+  }
+  .hero-lead,
+  .hero-tag,
+  .hero-hud-v {
+    text-shadow:
+      0 0 0.2em var(--color-cobalt),
+      0 0 0.7em var(--color-cobalt);
+  }
+
   /* ---------- live HUD ---------- */
   .hero-hud {
     width: clamp(10.5rem, 17vw, 14.5rem);
+  }
+  .hero-hud-row:first-child {
     border-top: 1px solid var(--line);
   }
   .hero-hud-row {
@@ -74,7 +109,7 @@
     font-size: 0.95rem;
     letter-spacing: 0.02em;
     color: var(--fg);
-    transition: color 0.18s linear;
+    transition: color 0.12s linear;
   }
   .hero-hud-v b {
     font-weight: 500;
@@ -118,6 +153,9 @@
   .hero-hud-hint .hero-hud-k {
     color: var(--fg);
   }
+  .hero-hint-coarse {
+    display: none;
+  }
   .hero-hint-drag {
     display: none;
     color: var(--color-heat);
@@ -127,6 +165,14 @@
   }
   .hero.is-dragging .hero-hint-drag {
     display: inline;
+  }
+  @media (pointer: coarse) {
+    .hero-hint-fine {
+      display: none;
+    }
+    .hero-hint-coarse {
+      display: inline;
+    }
   }
   .hero-nudge {
     display: inline-flex;
@@ -189,13 +235,14 @@
     display: inline-block;
   }
 
+  /* ---------- scroll cue: three speed lines streaking down ---------- */
   .hero-cue {
     grid-area: 1 / 2 / 2 / 3;
     align-self: end;
     justify-self: end;
     display: inline-flex;
     align-items: flex-end;
-    gap: 0.75rem;
+    gap: 0.8rem;
     min-height: 44px;
     padding: 0.25rem 0 0.35rem 0.5rem;
     color: var(--fg);
@@ -205,8 +252,8 @@
     position: relative;
     display: inline-flex;
     align-items: flex-start;
-    gap: 6px;
-    height: 4.4rem;
+    gap: 7px;
+    height: 5.5rem;
     transform: skewX(var(--slant));
   }
   .hero-cue-lines i {
@@ -215,7 +262,7 @@
     width: 2px;
     height: 100%;
     overflow: hidden;
-    background: linear-gradient(var(--line), var(--line)) 50% 0 / 1px 100% no-repeat;
+    background: rgb(239 238 233 / 0.35);
   }
   .hero-cue-lines i:nth-child(2) {
     height: 78%;
@@ -231,36 +278,38 @@
     left: 0;
     right: 0;
     top: 0;
-    height: 70%;
-    background: linear-gradient(to bottom, transparent, var(--fg) 85%);
+    height: 42%;
+    background: linear-gradient(to bottom, rgb(239 238 233 / 0), var(--fg) 70%);
     transform: translateY(-105%);
-    animation: hero-streak 0.9s cubic-bezier(0.6, 0, 0.2, 1) infinite;
+    animation: hero-streak 0.7s cubic-bezier(0.7, 0, 0.25, 1) infinite;
   }
   .hero-cue-lines i:nth-child(2)::after {
-    animation-duration: 0.9s;
-    animation-delay: 0.12s;
-    background: linear-gradient(to bottom, transparent, var(--color-heat) 85%);
+    animation-delay: 0.09s;
+    background: linear-gradient(to bottom, rgb(255 75 31 / 0), var(--color-heat) 70%);
   }
   .hero-cue-lines i:nth-child(3)::after {
-    animation-duration: 0.9s;
-    animation-delay: 0.24s;
+    animation-delay: 0.18s;
   }
   .hero-cue:hover .hero-cue-lines i::after,
   .hero-cue:focus-visible .hero-cue-lines i::after {
-    animation-duration: 0.45s;
+    animation-duration: 0.4s;
   }
   @keyframes hero-streak {
     0% {
       transform: translateY(-105%);
     }
-    70%,
+    75%,
     100% {
-      transform: translateY(150%);
+      transform: translateY(240%);
     }
   }
 
   /* ---------- below desktop: stack the copy under the headline ---------- */
   @media (max-width: 1099px) {
+    .hero {
+      /* the stacked copy needs the height the side-by-side layout gave the headline */
+      --hero-fs: clamp(4.6rem, min(15vw, 17svh), 11rem);
+    }
     .hero-copy {
       grid-area: 2 / 1 / 3 / 2;
       margin-left: 0;
@@ -272,6 +321,16 @@
     }
   }
 
+  /* landscape phones: don't force a portrait-sized hero onto a 390px-tall screen */
+  @media (max-height: 520px) and (orientation: landscape) {
+    .hero {
+      min-height: max(440px, 100svh);
+    }
+    .hero-ui {
+      padding-top: 84px;
+    }
+  }
+
   /* ---------- phones ---------- */
   @media (max-width: 599px) {
     .hero {
@@ -280,21 +339,41 @@
     .hero-ui {
       padding-top: 92px;
       padding-bottom: 20px;
+      /* the bell needs a real band above the headline; short phones grow the hero rather than shrink it */
+      row-gap: max(184px, 24svh);
+    }
+    .hero-top {
+      gap: 0.5rem;
+    }
+    .hero-tag {
+      min-width: 0;
+      flex: 0 1 auto;
     }
     .hero-hud {
-      width: auto;
-      min-width: 8.5rem;
+      flex: 0 0 auto;
+      min-width: 0;
+      width: 7.5rem;
     }
-    .hero-hud-warp,
-    .hero-hud-hint {
+    .hero-hud::before {
+      inset: -1.25rem;
+    }
+    .hero-hud-warp {
       display: none;
     }
     .hero-hud-row {
       padding: 0.4rem 0 0.38rem;
-      gap: 0.2rem 0.75rem;
+      gap: 0.2rem 0.5rem;
     }
     .hero-hud-v {
       font-size: 0.82rem;
+    }
+    .hero-hud-hint {
+      padding: 0.36rem 0 0.34rem;
+      font-size: 0.64rem;
+    }
+    .hero-nudge {
+      width: 0.95rem;
+      height: 0.95rem;
     }
     .hero-copy {
       width: 100%;
@@ -319,6 +398,11 @@
       display: none;
     }
   }
+  @media (max-width: 389px) {
+    .hero-tag-long {
+      display: none;
+    }
+  }
 
   @media (prefers-reduced-motion: reduce) {
     .hero-nudge,
@@ -326,7 +410,7 @@
       animation: none;
     }
     .hero-cue-lines i::after {
-      transform: translateY(40%);
+      transform: translateY(60%);
     }
   }
 }
