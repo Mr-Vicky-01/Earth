@@ -30,6 +30,8 @@ const HEROES = Object.fromEntries(
 const initialHero = () => {
   const fromHash = typeof location !== 'undefined' ? location.hash.slice(1) : ''
   if (HEROES[fromHash]) return fromHash
+  // recommended concept opens by default
+  if (HEROES.drop) return 'drop'
   return AVAILABLE[0]?.[0] ?? null
 }
 
@@ -68,7 +70,7 @@ export default function App() {
     <>
       <Preloader onDone={onDone} />
       <Cursor />
-      <Nav ready={ready} />
+      <Nav ready={ready} menuExtra={<HeroPicker variant="inline" options={options} value={hero} onChange={pick} ready={ready} />} />
       <Hud ready={ready} />
       <HeroPicker options={options} value={hero} onChange={pick} ready={ready} />
       <main>

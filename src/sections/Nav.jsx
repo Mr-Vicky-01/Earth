@@ -15,7 +15,7 @@ export const LINKS = [
   ['Pricing', '#pricing'],
 ]
 
-export function Nav({ ready }) {
+export function Nav({ ready, menuExtra = null }) {
   const nav = useRef(null)
   const links = useRef(null)
   const indicator = useRef(null)
@@ -179,6 +179,16 @@ export function Nav({ ready }) {
             </a>
           ))}
         </nav>
+        {menuExtra && (
+          <div
+            className="chr-menu-item"
+            onClick={(e) => {
+              if (e.target.closest('button')) setOpen(false)
+            }}
+          >
+            {menuExtra}
+          </div>
+        )}
         <div className="chr-menu-item flex flex-wrap items-end justify-between gap-6 border-t border-white/25 pt-6">
           <div className="mono" style={{ color: 'rgb(239 238 233 / .78)' }}>
             88 Foundry Street, District 9
