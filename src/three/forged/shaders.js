@@ -21,7 +21,7 @@ vec3 hfBlackbody(float t) {
   c = mix(c, c6, clamp((t - 0.75) / 0.25, 0.0, 1.0));
   return c;
 }
-float hfHeatGain(float t) { return 0.2 + 5.5 * pow(max(t, 0.0), 2.2); }
+float hfHeatGain(float t) { return 0.25 + 3.3 * pow(max(t, 0.0), 2.3); }
 `
 
 export const NOISE = /* glsl */ `
@@ -68,10 +68,16 @@ float hfCell(vec2 x) {
 export const STEEL_VERT_PARS = /* glsl */ `
 varying vec3 vHfObj;
 varying vec3 vHfN;
+varying float vHfWy;
 `
 export const STEEL_VERT_MAIN = /* glsl */ `
 vHfObj = position;
 vHfN = normal;
+vHfWy = (modelMatrix * vec4(transformed, 1.0)).y;
+`
+// last line of the fragment: in the floor's reflection pass, alpha carries the height above the floor
+export const STEEL_FRAG_OUT = /* glsl */ `
+if (uMirror > 0.5) gl_FragColor.a = clamp((vHfWy - uFloorY) * 0.25, 0.0, 1.0);
 `
 
 export const STEEL_FRAG_PARS = /* glsl */ `
@@ -88,8 +94,11 @@ uniform vec3 uTorch;
 uniform vec4 uGlint;
 uniform sampler2D uSdf;
 uniform vec4 uSdfXf;
+uniform float uMirror;
+uniform float uFloorY;
 varying vec3 vHfObj;
 varying vec3 vHfN;
+varying float vHfWy;
 ${BLACKBODY}
 ${NOISE}
 vec3 hfPerturb(vec3 surfPos, vec3 surfNorm, vec2 dHdxy, float faceDir) {
@@ -138,16 +147,18 @@ for (int i = 0; i < ${SPLATS}; i++) {
     hfTp += tw * exp(-q * 0.5 - 0.08 * q * q);
   }
 }
-// thin edges shed heat first and the core holds it (inside-distance field); stronger as the steel cools
+// thin edges, arrises and walls lose heat first and the core holds it (inside-distance field): as the steel
+// cools the glow shrinks into the thick of each stroke, and even at white heat the edges run a shade cooler,
+// so the letterform stays defined
 float hfD = texture2D(uSdf, vHfObj.xy * uSdfXf.xy + uSdfXf.zw).r;
 float hfFace = smoothstep(0.7, 0.97, abs(vHfN.z));
 float hfCore = hfD * hfFace;
-float hfEdgeK = mix(0.48, 0.86, smoothstep(0.55, 1.05, hfT));
-float hfShape = mix(hfEdgeK, 1.0, smoothstep(0.0, 0.8, hfCore)) * (1.0 - 0.08 * vHfObj.y);
+float hfC = smoothstep(0.0, 0.8, hfCore);
 // exit flare: the bevels and walls run hot in uneven patches, the faces stay steel
 float hfRimT = uRim * (1.0 - smoothstep(0.0, 0.22, hfCore)) * (0.35 + 0.9 * hfN1 * hfN1);
-float hfTn = hfT * (0.86 + 0.28 * hfN1);
-float hfTe = clamp(hfTn * hfShape + hfRimT, 0.0, 1.25);
+float hfTn = hfT * (0.88 + 0.24 * hfN1);
+float hfTe = hfTn * mix(0.84, 1.0, hfC) * pow(clamp(hfTn, 0.001, 1.0), 0.75 * (1.0 - hfC)) * (1.0 - 0.06 * vHfObj.y);
+hfTe = clamp(hfTe + hfRimT, 0.0, 1.25);
 // the oxide covers the whole hot bar, cool edges included: they go dark, never silver-pink
 float hfHot = smoothstep(0.012, 0.06, max(hfTn, hfTe));
 float hfTau = clamp(uTemper * (0.7 + 0.6 * hfN1) * mix(1.12, 0.9, hfCore) + hfTp, 0.0, 1.0);
@@ -197,82 +208,28 @@ if (uGlint.z > 0.001) {
 `
 
 /* ------------------------------------------------------------------ */
-/* Floor reflection: mirrored letters under the black plate            */
-/* ------------------------------------------------------------------ */
-export const MIRROR_VERT_PARS = /* glsl */ `
-varying vec3 vHfObj;
-varying vec3 vHfW;
-`
-export const MIRROR_VERT_MAIN = /* glsl */ `
-vHfObj = position;
-vHfW = (modelMatrix * vec4(transformed, 1.0)).xyz;
-`
-export const MIRROR_FRAG_PARS = /* glsl */ `
-uniform float uTemp;
-uniform float uRim;
-uniform vec2 uRest;
-uniform float uFloor;
-uniform float uTemper;
-uniform float uSplatOn;
-uniform vec4 uSplats[${SPLATS}];
-uniform sampler2D uSdf;
-uniform vec4 uSdfXf;
-varying vec3 vHfObj;
-varying vec3 vHfW;
-${BLACKBODY}
-vec3 hfTemperTint(float t) {
-  vec3 c = vec3(1.0);
-  c = mix(c, vec3(1.0, 0.88, 0.63), smoothstep(0.04, 0.22, t));
-  c = mix(c, vec3(0.8, 0.58, 0.36), smoothstep(0.22, 0.42, t));
-  c = mix(c, vec3(0.44, 0.42, 0.43), smoothstep(0.42, 0.58, t));
-  c = mix(c, vec3(0.34, 0.41, 0.6), smoothstep(0.58, 0.8, t));
-  return c;
-}
-`
-export const MIRROR_FRAG_MAIN = /* glsl */ `
-if (vHfW.y > uFloor + 0.002) discard;
-vec2 hfRest = vHfObj.xy + uRest;
-float hfT = uTemp + uRim * 0.3;
-for (int i = 0; i < ${SPLATS}; i++) {
-  if (uSplatOn < 0.5) break;
-  vec4 s = uSplats[i];
-  if (s.w > 0.002) {
-    vec2 d = hfRest - s.xy;
-    float q = dot(d, d) / (s.z * s.z);
-    hfT += s.w * exp(-q * 0.95 - 0.25 * q * q);
-  }
-}
-float hfCore = texture2D(uSdf, vHfObj.xy * uSdfXf.xy + uSdfXf.zw).r;
-float hfShape = mix(mix(0.48, 0.86, smoothstep(0.55, 1.05, hfT)), 1.0, smoothstep(0.0, 0.8, hfCore));
-float hfTe = clamp(hfT * hfShape, 0.0, 1.25);
-diffuseColor.rgb = mix(diffuseColor.rgb * hfTemperTint(uTemper), vec3(0.085, 0.066, 0.05), smoothstep(0.012, 0.06, hfT));
-totalEmissiveRadiance += hfBlackbody(hfTe) * hfHeatGain(hfTe);
-// a polished black plate: crisp at the letters' feet, gone within about half a letter height
-float hfFade = 0.3 * exp(-(uFloor - vHfW.y) * 3.4);
-`
-
-/* ------------------------------------------------------------------ */
-/* Sparks + embers: one instanced quad per particle, stretched along   */
-/* its screen-space velocity, additive                                 */
+/* Sparks + embers: one instanced quad per particle. A spark is a      */
+/* streak whose length is its velocity times the shutter (motion blur), */
+/* bright white-yellow while it burns and orange as it dies; embers are */
+/* soft round glows                                                    */
 /* ------------------------------------------------------------------ */
 export const SPARK_VERT = /* glsl */ `
 attribute vec3 aPos;
 attribute vec3 aVel;
 attribute vec4 aInfo; // age 0..1, width (world), start heat, kind (0 spark, 1 ember)
-uniform float uStretch;
+uniform float uShutter;
 uniform float uAspect;
 uniform float uGain;
 uniform float uSize;
-uniform float uMirror; // 1: drawn mirrored under the floor plate
-uniform float uFloor;
 varying vec3 vColor;
 varying vec2 vQ;
+varying float vKind;
 ${BLACKBODY}
 void main() {
   float age = aInfo.x;
   float kind = aInfo.w;
-  // sparks thin out as they burn down
-  float size = aInfo.y * uSize * (kind > 0.5 ? 1.0 : mix(1.0, 0.35, age));
+  vKind = kind;
+  float size = aInfo.y * uSize * (kind > 0.5 ? 1.0 : mix(1.0, 0.45, age));
   if (aInfo.y <= 0.0) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     vColor = vec3(0.0);
@@ -280,7 +237,7 @@ void main() {
     return;
   }
   vec4 h = projectionMatrix * modelViewMatrix * vec4(aPos, 1.0);
-  vec4 t = projectionMatrix * modelViewMatrix * vec4(aPos - aVel * uStretch * (1.0 - kind), 1.0);
+  vec4 t = projectionMatrix * modelViewMatrix * vec4(aPos - aVel * uShutter * (1.0 - kind), 1.0);
   if (t.w < 0.05 || h.w < 0.05) t = h;
   vec2 d = h.xy / h.w - t.xy / t.w;
   d.x *= uAspect;
@@ -289,112 +246,32 @@ void main() {
   vec2 nrm = vec2(-dir.y, dir.x);
   float wh = size * projectionMatrix[1][1];
   vec4 p = mix(h, t, position.x);
-  // perspective-correct width, tapering to the tail; head and tail capped so slow particles read as dots
-  vec2 off = nrm * position.y * wh * mix(1.0, 0.4, position.x) + dir * wh * (position.x < 0.5 ? 1.0 : -1.0);
+  // perspective-correct width, tapering to the tail; round caps so slow particles read as dots
+  vec2 off = nrm * position.y * wh * mix(1.0, 0.35, position.x) + dir * wh * (position.x < 0.5 ? 1.0 : -1.0);
   off.x /= uAspect;
   p.xy += off;
   gl_Position = p;
   vQ = position.xy;
-  float heat = kind > 0.5 ? aInfo.z : aInfo.z * pow(1.0 - age, 1.1);
-  // sparks keep a yellow-orange hue and burn out to black (no red or pink tail); embers stay orange
-  float hue = kind > 0.5 ? max(heat, 0.5) : mix(0.62, 1.0, clamp(heat, 0.0, 1.0));
-  float lum = kind > 0.5 ? (0.5 + 6.0 * heat * heat) : (0.1 + 6.6 * heat * heat * heat);
+  float heat = kind > 0.5 ? aInfo.z : aInfo.z * pow(1.0 - age, 0.9);
+  // a spark burns white-yellow and dies orange, never red or pink; embers stay a soft orange
+  float hue = kind > 0.5 ? aInfo.z : mix(0.62, 1.0, clamp(heat, 0.0, 1.0));
+  float lum = kind > 0.5 ? (0.35 + 4.0 * heat * heat) : (0.15 + 7.0 * heat * heat * heat);
   float fade = kind > 0.5
-    ? smoothstep(0.0, 0.14, age) * (1.0 - smoothstep(0.6, 1.0, age))
-    : 1.0 - smoothstep(0.25, 1.0, age);
-  if (uMirror > 0.5) fade *= 0.5 * exp(-max(aPos.y - uFloor, 0.0) * 3.2);
-  vColor = hfBlackbody(hue) * lum * fade * uGain;
+    ? smoothstep(0.0, 0.12, age) * (1.0 - smoothstep(0.55, 1.0, age))
+    : smoothstep(0.0, 0.05, age) * (1.0 - smoothstep(0.7, 1.0, age));
+  // a streak spreads its light along its length: keep the energy, not the brightness
+  float spread = kind > 0.5 ? 1.0 : clamp(wh * 2.0 / max(len * 0.5 + wh * 2.0, 1e-4), 0.35, 1.0);
+  vColor = hfBlackbody(hue) * lum * fade * uGain * spread;
 }
 `
 export const SPARK_FRAG = /* glsl */ `
 varying vec3 vColor;
 varying vec2 vQ;
+varying float vKind;
 void main() {
   float side = 1.0 - vQ.y * vQ.y;
-  float along = 0.2 + 0.8 * (1.0 - vQ.x);
-  gl_FragColor = vec4(vColor * side * along, 1.0);
-}
-`
-
-/* ------------------------------------------------------------------ */
-/* Backdrop: screen-space forge darkness with heat glow behind letters */
-/* ------------------------------------------------------------------ */
-export const BACK_VERT = /* glsl */ `
-varying vec2 vUv;
-void main() {
-  vUv = uv;
-  gl_Position = vec4(position.xy, 0.99999, 1.0);
-}
-`
-export const BACK_FRAG = /* glsl */ `
-uniform float uAspect;
-uniform vec4 uGlow[5]; // uv x, uv y, heat, radius
-uniform vec3 uCore;    // uv x, uv y, strength of the ever-burning forge on the horizon
-uniform float uPulse;
-uniform float uHorizon; // uv y of the floor horizon
-uniform vec4 uFlare;    // uv x, uv y, strength, size: the forge mouth the camera dives toward on the way out
-uniform float uTime;
-varying vec2 vUv;
-${BLACKBODY}
-void main() {
-  vec2 uv = vUv;
-  // ink, with a faint cool lift where the black floor plate meets the dark
-  vec3 col = vec3(0.0026, 0.0027, 0.0042);
-  col += vec3(0.0016, 0.0018, 0.0028) * exp(-abs(uv.y - uHorizon) * 10.0);
-  vec3 warm = vec3(0.0);
-  for (int i = 0; i < 5; i++) {
-    vec4 g = uGlow[i];
-    vec2 d = uv - g.xy;
-    d.x *= uAspect;
-    d.y *= 1.25;
-    float f = exp(-dot(d, d) / (g.w * g.w));
-    float T = min(g.z, 1.2);
-    // glow tracks heat squared and never drops into maroon: an orange-to-yellow light, gone when cold
-    warm += hfBlackbody(0.4 + 0.52 * min(T, 1.0)) * (T * T * 0.02 + T * T * T * 0.11) * f;
-  }
-  // the forge never quite goes out: a low, narrow line of fire on the horizon behind the word
-  vec2 c = uv - uCore.xy;
-  c.x *= uAspect * 0.32;
-  c.y *= 5.0;
-  float flick = 0.88 + 0.12 * sin(uTime * 2.3) * sin(uTime * 3.7 + 1.0);
-  warm += vec3(0.1, 0.034, 0.009) * uCore.z * flick * exp(-dot(c, c) / 0.05);
-  col += warm * (1.0 + uPulse * 1.5);
-  // forge mouth: a small white-yellow core with a hard falloff into black
-  vec2 fd = uv - uFlare.xy;
-  fd.x *= uAspect;
-  float r = length(fd) / max(uFlare.w, 1e-4);
-  col += uFlare.z * (vec3(1.0, 0.84, 0.58) * 5.0 * exp(-r * r * 6.0) + vec3(1.0, 0.45, 0.1) * 0.6 * exp(-r * 2.6) * (1.0 - smoothstep(0.8, 2.6, r)));
-  gl_FragColor = vec4(col, 1.0);
-}
-`
-
-/* ------------------------------------------------------------------ */
-/* Floor light pool: warm light thrown on the floor by hot letters     */
-/* ------------------------------------------------------------------ */
-export const POOL_VERT = /* glsl */ `
-varying vec3 vW;
-void main() {
-  vec4 w = modelMatrix * vec4(position, 1.0);
-  vW = w.xyz;
-  gl_Position = projectionMatrix * viewMatrix * w;
-}
-`
-export const POOL_FRAG = /* glsl */ `
-uniform vec4 uPool[5]; // world x, world z, heat, half width
-uniform float uPulse;
-varying vec3 vW;
-${BLACKBODY}
-void main() {
-  vec3 col = vec3(0.0);
-  for (int i = 0; i < 5; i++) {
-    vec4 p = uPool[i];
-    if (p.z < 0.004) continue;
-    vec2 d = vec2((vW.x - p.x) / (p.w * 1.5 + 0.35), (vW.z - p.y) / 1.1);
-    float f = exp(-dot(d, d));
-    float T = min(p.z, 1.2);
-    col += hfBlackbody(0.36 + 0.55 * min(T, 1.0)) * (T * T * 0.07 + T * T * T * 0.12 + T * 0.006) * f;
-  }
-  col *= 1.0 + uPulse;
-  gl_FragColor = vec4(col, 1.0);
+  float along = vKind > 0.5 ? 1.0 : 0.25 + 0.75 * (1.0 - vQ.x);
+  float soft = vKind > 0.5 ? side * side : side;
+  gl_FragColor = vec4(vColor * soft * along, 1.0);
 }
 `

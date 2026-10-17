@@ -44,6 +44,32 @@ const lerpStops = (stops, t, col) => {
 /** heat 0..1.25 → degrees Celsius */
 export const heatToCelsius = (t) => lerpStops(CELSIUS, t, 1)
 
+/** degrees Celsius → heat 0..1.25 (inverse of heatToCelsius) */
+export function celsiusToHeat(c) {
+  if (c <= CELSIUS[0][1]) return 0
+  for (let i = 1; i < CELSIUS.length; i++) {
+    const b = CELSIUS[i]
+    if (c <= b[1]) {
+      const a = CELSIUS[i - 1]
+      return a[0] + ((b[0] - a[0]) * (c - a[1])) / (b[1] - a[1])
+    }
+  }
+  return CELSIUS[CELSIUS.length - 1][0]
+}
+
+export const AMBIENT_C = 21
+export const SLAM_C = 1320 // the letters arrive at white heat
+/**
+ * Cooling of the stock, in °C per second: radiation (T⁴, dominant while it glows, so white → orange is quick)
+ * plus convection (Newton, the long slow tail through the reds). Fitted to: orange ≈ 0.5 s, cherry ≈ 1 s,
+ * dull red ≈ 1.8 s, black heat ≈ 2.6 s.
+ */
+export function coolRate(c) {
+  const k = c + 273
+  const a = AMBIENT_C + 273
+  return (-0.5 * (k * k * k * k - a * a * a * a)) / 4.0425e9 - 0.25 * (c - AMBIENT_C)
+}
+
 /** Writes the linear blackbody colour for heat t into out[0..2]; returns out. */
 export function blackbody(t, out) {
   const c = Math.min(Math.max(t, 0), 1)
@@ -54,7 +80,7 @@ export function blackbody(t, out) {
 }
 
 /** Emission gain for heat t (matches hfHeatGain in GLSL). */
-export const heatGain = (t) => 0.2 + 7.5 * Math.pow(Math.max(t, 0), 2.2)
+export const heatGain = (t) => 0.25 + 3.3 * Math.pow(Math.max(t, 0), 2.3)
 
 const toSrgb = (v) => {
   const x = Math.min(Math.max(v, 0), 1)

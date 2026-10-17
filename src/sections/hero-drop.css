@@ -1,6 +1,6 @@
 @layer components {
   .hd {
-    --hd-bg: #060609;
+    --hd-bg: #0a0b0e;
     height: 100svh;
     min-height: 640px;
     overflow: clip;
@@ -117,14 +117,15 @@
   .hd-read.is-hot span:nth-of-type(2) b {
     color: var(--color-heat);
   }
+  /* a slam flashes the readout heat, then it cools back (no hard steps) */
   .hd-read.is-slam {
-    animation: hd-slam 0.5s steps(1, end);
+    animation: hd-slam 0.7s cubic-bezier(0.2, 0.6, 0.3, 1);
   }
   @keyframes hd-slam {
     0% {
       color: var(--color-heat);
     }
-    40% {
+    100% {
       color: var(--mute);
     }
   }
@@ -289,10 +290,26 @@
     position: absolute;
     inset: 0;
     overflow: hidden;
+    background: var(--hd-bg);
+  }
+  /* painted block wall in low light: 2:1 courses in running bond, a soft wash from camera-left */
+  .hd-fallback-wall {
+    position: absolute;
+    inset: 0 0 34% 0;
     background:
-      radial-gradient(40% 18% at 52% 74%, rgb(255 244 228 / 0.16), transparent 70%),
-      radial-gradient(70% 60% at 50% 30%, rgb(60 62 78 / 0.35), transparent 70%),
-      var(--hd-bg);
+      radial-gradient(60% 70% at 38% 62%, rgb(150 152 164 / 0.22), transparent 72%),
+      repeating-linear-gradient(to bottom, transparent 0 46px, rgb(0 0 0 / 0.38) 46px 48px),
+      repeating-linear-gradient(to right, transparent 0 94px, rgb(0 0 0 / 0.3) 94px 96px),
+      linear-gradient(to bottom, #15161b, #23252c 70%, #1b1c21);
+    -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0.55), #000 40%);
+    mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0.55), #000 40%);
+  }
+  .hd-fallback-floor {
+    position: absolute;
+    inset: 66% 0 0 0;
+    background:
+      radial-gradient(42% 46% at 52% 30%, rgb(255 238 214 / 0.2), transparent 72%),
+      linear-gradient(to bottom, #121216, #08080a);
   }
   .hd-fallback-cone {
     position: absolute;

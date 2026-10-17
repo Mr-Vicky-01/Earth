@@ -1,10 +1,14 @@
 import * as THREE from 'three'
 import { SPARK_FRAG, SPARK_VERT } from './shaders'
 
-const GRAVITY = -9.2
+export const UNITS_PER_M = 2 // 1 world unit = 0.5 m (the letters' cap height)
+const GRAVITY = -9.81 * UNITS_PER_M
 
 /**
- * Pooled sparks (stretched streaks: gravity, drag, one bounce off the floor) and embers (slow, rising dots).
+ * Steel sparks and forge embers. A spark is a hot fleck of steel: it leaves fast, slows hard in the air (drag),
+ * falls under gravity, skids once off the floor plate, and near the end of its life may burst into a few short
+ * branches (the carbon in the steel flashing), which is what makes steel sparks fork. Embers are slow, soft
+ * glows riding the warm air.
  * All state lives in typed arrays; emitting reuses the oldest slot, so nothing is allocated per particle.
  * Indices [0, embers) are embers, the rest are sparks.
  */
@@ -22,6 +26,8 @@ export class SparkField {
     this.size = new Float32Array(cap)
     this.drag = new Float32Array(cap)
     this.grav = new Float32Array(cap)
+    this.fork = new Float32Array(cap)
+    this.forkAt = new Float32Array(cap)
     this.bounced = new Uint8Array(cap)
     this.alive = new Uint8Array(cap)
     this.seed = new Float32Array(cap)
@@ -42,16 +48,20 @@ export class SparkField {
       vertexShader: SPARK_VERT,
       fragmentShader: SPARK_FRAG,
       uniforms: {
-        uStretch: { value: 0.034 },
+        uShutter: { value: 1 / 60 },
         uAspect: { value: 1 },
         uGain: { value: 1 },
         uSize: { value: 1 },
-        uMirror: { value: 0 },
-        uFloor: { value: -0.5 },
       },
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      // additive light; the alpha channel (the floor reflection's height) is left as it is
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.AddEquation,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneFactor,
+      blendSrcAlpha: THREE.ZeroFactor,
+      blendDstAlpha: THREE.OneFactor,
       // the quad's winding follows the streak direction, so it must never be back-face culled
       side: THREE.DoubleSide,
       toneMapped: false,
@@ -59,25 +69,7 @@ export class SparkField {
     this.mesh = new THREE.Mesh(geo, this.material)
     this.mesh.frustumCulled = false
     this.mesh.renderOrder = 3
-    // the same particles mirrored under the black floor plate (drawn before the plate's depth pass)
-    this.mirrorMaterial = this.material.clone()
-    this.mirrorMaterial.uniforms.uMirror.value = 1
-    this.mirrorMaterial.uniforms.uStretch = this.material.uniforms.uStretch
-    this.mirrorMaterial.uniforms.uAspect = this.material.uniforms.uAspect
-    this.mirrorMaterial.uniforms.uSize = this.material.uniforms.uSize
-    this.mirrorMaterial.transparent = false
-    this.mirror = new THREE.Mesh(geo, this.mirrorMaterial)
-    this.mirror.frustumCulled = false
-    this.mirror.renderOrder = -5.5
-    this.mirror.matrixAutoUpdate = false
     this.bounds = { x: 4, y0: -0.6, y1: 0.4, z0: -3.5, z1: 0.8 }
-  }
-
-  /** Mirror the particles about the floor plane y = floorY. */
-  setFloor(floorY) {
-    this.mirrorMaterial.uniforms.uFloor.value = floorY
-    this.mirror.matrix.makeScale(1, -1, 1).setPosition(0, 2 * floorY, 0)
-    this.mirror.matrixWorldNeedsUpdate = true
   }
 
   /** Embers are spread through a volume around the word. */
@@ -92,20 +84,23 @@ export class SparkField {
     const b = this.bounds
     const k = i * 3
     this.p[k] = (Math.random() * 2 - 1) * b.x
-    this.p[k + 1] = b.y0 + Math.random() * (scatter ? 2.2 : b.y1 - b.y0)
+    this.p[k + 1] = b.y0 + Math.random() * (scatter ? 2.4 : b.y1 - b.y0)
     this.p[k + 2] = b.z0 + Math.random() * (b.z1 - b.z0)
-    this.v[k] = (Math.random() - 0.5) * 0.08
-    this.v[k + 1] = 0.16 + Math.random() * 0.24
-    this.v[k + 2] = (Math.random() - 0.5) * 0.05
-    this.life[i] = 4.5 + Math.random() * 4.5
-    this.age[i] = scatter ? Math.random() : 0
-    this.heat[i] = 0.36 + Math.random() * 0.3
-    this.size[i] = 0.007 + Math.random() * 0.009
+    this.v[k] = (Math.random() - 0.5) * 0.06
+    this.v[k + 1] = 0.18 + Math.random() * 0.22
+    this.v[k + 2] = (Math.random() - 0.5) * 0.04
+    this.life[i] = 5 + Math.random() * 5
+    this.age[i] = scatter ? Math.random() * 0.9 : 0
+    this.heat[i] = 0.34 + Math.random() * 0.3
+    this.size[i] = 0.006 + Math.random() * 0.008
     this.alive[i] = 1
   }
 
-  /** One spark. Overwrites the oldest slot when the pool is full. */
-  emit(x, y, z, vx, vy, vz, life, heat, size, drag = 1.1, grav = 1) {
+  /**
+   * One spark at (x,y,z) with velocity (vx,vy,vz) in units/s. drag in 1/s; fork = chance (0..1) that it bursts
+   * into branches near the end of its life. Overwrites the oldest slot when the pool is full.
+   */
+  emit(x, y, z, vx, vy, vz, life, heat, size, drag = 3, grav = 1, fork = 0.25) {
     const span = this.cap - this.embers
     if (span <= 0) return
     const i = this.cursor
@@ -123,14 +118,15 @@ export class SparkField {
     this.size[i] = size
     this.drag[i] = drag
     this.grav[i] = grav
+    this.fork[i] = fork
+    this.forkAt[i] = 0.5 + Math.random() * 0.35
     this.bounced[i] = 0
     this.alive[i] = 1
   }
 
   /** Spray of `n` sparks from a point around direction (dx,dy,dz) with cone `spread` (0 = tight, 1 = hemisphere). */
-  burst(n, x, y, z, dx, dy, dz, spread, speedMin, speedMax, heatMin, heatMax, lifeMin = 0.45, lifeMax = 1.15) {
+  burst(n, x, y, z, dx, dy, dz, spread, speedMin, speedMax, heatMin, heatMax, lifeMin = 0.25, lifeMax = 0.7, fork = 0.3) {
     for (let j = 0; j < n; j++) {
-      // random unit vector
       let rx = Math.random() * 2 - 1
       let ry = Math.random() * 2 - 1
       let rz = Math.random() * 2 - 1
@@ -139,11 +135,11 @@ export class SparkField {
       ry /= rl
       rz /= rl
       let ux = dx + rx * spread
-      let uy = dy + ry * spread + 0.22
+      let uy = dy + ry * spread + 0.15
       let uz = dz + rz * spread
       const ul = Math.hypot(ux, uy, uz) || 1
       // a few very fast long streaks, most medium
-      const sp = speedMin + (speedMax - speedMin) * Math.pow(Math.random(), 1.8)
+      const sp = speedMin + (speedMax - speedMin) * Math.pow(Math.random(), 1.7)
       ux = (ux / ul) * sp
       uy = (uy / ul) * sp
       uz = (uz / ul) * sp
@@ -156,8 +152,39 @@ export class SparkField {
         uz,
         lifeMin + Math.random() * (lifeMax - lifeMin),
         heatMin + Math.random() * (heatMax - heatMin),
-        0.0075 + Math.random() * 0.0095,
-        0.9 + Math.random() * 0.9,
+        0.0055 + Math.random() * 0.0075,
+        2.4 + Math.random() * 2.2,
+        1,
+        fork,
+      )
+    }
+  }
+
+  // the carbon burst: a spark ends in two to four short, bright branches
+  forkSpark(i) {
+    const k = i * 3
+    const n = 2 + Math.floor(Math.random() * 3)
+    const vx = this.v[k]
+    const vy = this.v[k + 1]
+    const vz = this.v[k + 2]
+    for (let j = 0; j < n; j++) {
+      const a = Math.random() * Math.PI * 2
+      const b = Math.random() * 2 - 1
+      const s = 2.5 + Math.random() * 4
+      const c = Math.sqrt(1 - b * b)
+      this.emit(
+        this.p[k],
+        this.p[k + 1],
+        this.p[k + 2],
+        vx * 0.4 + Math.cos(a) * c * s,
+        vy * 0.4 + b * s,
+        vz * 0.4 + Math.sin(a) * c * s,
+        0.05 + Math.random() * 0.1,
+        Math.min(1, this.heat[i] * (1 - this.age[i] * 0.4) + 0.25),
+        this.size[i] * 0.7,
+        4,
+        0.6,
+        0,
       )
     }
   }
@@ -179,9 +206,11 @@ export class SparkField {
           age[i] += dt / life[i]
           if (age[i] >= 1) this.respawnEmber(i, false)
           const s = this.seed[i]
-          // lazy sway in the rising air
-          v[k] += Math.sin(time * 0.9 + s) * 0.05 * dt
-          v[k + 2] += Math.cos(time * 0.7 + s * 1.3) * 0.03 * dt
+          // riding the warm air: buoyancy fades as the ember cools, the air sways it slowly
+          const lift = 0.12 * (1 - age[i])
+          v[k] += (Math.sin(time * 0.53 + s) * 0.05 + Math.sin(time * 0.31 + s * 2.1) * 0.03 - v[k] * 0.6) * dt
+          v[k + 1] += (lift - v[k + 1] * 0.25) * dt
+          v[k + 2] += (Math.cos(time * 0.41 + s * 1.3) * 0.03 - v[k + 2] * 0.6) * dt
           p[k] += v[k] * dt
           p[k + 1] += v[k + 1] * dt
           p[k + 2] += v[k + 2] * dt
@@ -194,11 +223,19 @@ export class SparkField {
         va[k + 2] = 0
         ia[q] = age[i]
         ia[q + 1] = size[i]
-        ia[q + 2] = heat[i] * (0.85 + 0.15 * Math.sin(time * 6 + this.seed[i]))
+        ia[q + 2] = heat[i] * (0.86 + 0.14 * Math.sin(time * 5.3 + this.seed[i]) * Math.sin(time * 2.9 + this.seed[i] * 0.7))
         ia[q + 3] = 1
         continue
       }
       age[i] += dt / life[i]
+      if (this.fork[i] > 0 && age[i] >= this.forkAt[i]) {
+        const f = this.fork[i]
+        this.fork[i] = 0
+        if (Math.random() < f) {
+          this.forkSpark(i)
+          age[i] = 1
+        }
+      }
       if (age[i] >= 1) {
         alive[i] = 0
         ia[q + 1] = 0
@@ -213,14 +250,13 @@ export class SparkField {
       p[k + 2] += v[k + 2] * dt
       if (p[k + 1] < floorY && v[k + 1] < 0) {
         if (!this.bounced[i]) {
-          // one skip off the floor, losing most of the energy
+          // one skid off the plate: most of the vertical energy goes, some of the run
           this.bounced[i] = 1
-          p[k + 1] = floorY + (floorY - p[k + 1]) * 0.3
-          v[k + 1] = -v[k + 1] * 0.3
-          v[k] *= 0.62
-          v[k + 2] *= 0.62
-          age[i] = Math.min(0.99, age[i] + 0.12)
-          heat[i] *= 0.85
+          p[k + 1] = floorY + (floorY - p[k + 1]) * 0.35
+          v[k + 1] = -v[k + 1] * 0.35
+          v[k] *= 0.7
+          v[k + 2] *= 0.7
+          heat[i] *= 0.9
         } else {
           alive[i] = 0
           ia[q + 1] = 0
@@ -255,6 +291,5 @@ export class SparkField {
   dispose() {
     this.geometry.dispose()
     this.material.dispose()
-    this.mirrorMaterial.dispose()
   }
 }

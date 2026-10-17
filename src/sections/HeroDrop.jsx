@@ -5,12 +5,12 @@ import { useTicker } from '../lib/useTicker'
 import { useInView } from '../lib/useInView'
 import { SpeedButton } from '../ui/SpeedButton'
 import { SceneBoundary } from '../three/SceneBoundary'
-import { createRig, stepRig, release, LOAD_KG } from '../three/drop/sim'
+import { createRig, stepRig, release, beginClean, beginDrag, startEntrance, LOAD_KG } from '../three/drop/sim'
 import './hero-drop.css'
 
 const DropScene = lazy(() => import('../three/drop/DropScene.jsx').then((m) => ({ default: m.DropScene })))
 
-const SCENE_WAIT = 1300 // ms after `ready` before the copy enters without the canvas
+const SCENE_WAIT = 1.3 // s after `ready` before the copy enters without the canvas (ticker time)
 const PULL_FROM = { x: -110, skewX: -26, scaleX: 1.45, opacity: 0, transformOrigin: '0% 50%' }
 const PULL_TO = { x: 0, skewX: 0, scaleX: 1, opacity: 1, duration: 0.8, ease: 'expo.out', stagger: 0.03 }
 const HOT = 1.5 // m/s: the readout turns heat above this
@@ -30,10 +30,11 @@ function softwareGL() {
   }
 }
 
-/** Static stand-in when WebGL is unavailable: the headline set big under a hard spotlight. */
+/** Static stand-in when WebGL is unavailable: the headline painted on a dim block wall under a hard light. */
 function DropFallback() {
   return (
     <div className="hd-fallback" aria-hidden="true">
+      <div className="hd-fallback-wall" />
       <div className="hd-fallback-cone" />
       <p className="hd-fallback-type d">
         <span className="d-line">Move it</span>
@@ -41,6 +42,7 @@ function DropFallback() {
           fast<span className="hd-fallback-dot">.</span>
         </span>
       </p>
+      <div className="hd-fallback-floor" />
       <div className="hd-fallback-bar">
         <i />
         <i />
@@ -55,9 +57,10 @@ function DropFallback() {
 }
 
 /**
- * Hero: THE DROP. A loaded Olympic bar falls into a dark gym and slams onto the platform under one hard light.
- * Drag the bar up to lift it (it hangs on a heavy spring), let go and it drops and bounces; click, tap or
- * press "Drop it" for a power clean and drop. Scrolling hoists it overhead and the light dies into the next section.
+ * Hero: THE DROP. A lamp strikes in a dark gym and a loaded Olympic bar falls into its light and slams onto the
+ * platform. Drag the bar up to lift it (it hangs on a heavy spring), let go and it drops and bounces; click, tap
+ * or press "Drop it" for a power clean and drop. Scrolling hoists it overhead and the light dies into the next
+ * section. All motion is physics in sim.js; this component owns the gate, the copy and the inputs.
  */
 export function HeroDrop({ ready }) {
   const root = useRef(null)
@@ -85,7 +88,7 @@ export function HeroDrop({ ready }) {
 
   useEffect(() => {
     rig.grabEl = grab.current
-    // dev-only handle for state probes in the screenshot harness (+ ?dd=slow: 10× slow motion for captures)
+    // dev-only handle for state probes in the capture tools (+ ?dd=slow: 10× slow motion)
     if (import.meta.env.DEV) {
       window.__drop = rig
       if (/[?&]dd=[^&]*slow/.test(location.search)) {
@@ -144,30 +147,23 @@ export function HeroDrop({ ready }) {
     }
   }, [rig])
 
-  /* ---------------- entrance gate: wait for the scene to draw (with a safety timeout) ---------------- */
+  /* ---------------- entrance gate: the scene is compiled, uploaded and warm (with a safety timeout) ---------------- */
   const [sceneLive, setSceneLive] = useState(false)
-  const drawn = useRef(false)
-  const onSceneFrame = useCallback(() => {
-    drawn.current = true
-  }, [])
   const onSceneLive = useCallback(() => setSceneLive(true), [])
   const [waited, setWaited] = useState(false)
   useEffect(() => {
     if (!ready || sceneLive || reduced) return
-    let id = setTimeout(() => {
-      // the first frame compiles every shader and can stall; once it is drawn, give it a little longer
-      if (!drawn.current) setWaited(true)
-      else id = setTimeout(() => setWaited(true), SCENE_WAIT * 1.5)
-    }, SCENE_WAIT)
-    return () => clearTimeout(id)
+    // on the GSAP ticker, so it measures the same clock the motion runs on
+    const dc = gsap.delayedCall(SCENE_WAIT, () => setWaited(true))
+    return () => dc.kill()
   }, [ready, sceneLive, reduced])
   const go = ready && (reduced || sceneLive || waited)
-  if (import.meta.env.DEV) rig.dbg = { ready, sceneLive, waited, go }
+  if (import.meta.env.DEV) rig.dbg = { ready, sceneLive, warm: sceneLive, waited, go }
 
-  /* ---------------- entrance: flicker on, the bar drops and slams, the copy is yanked in ---------------- */
+  /* ---------------- entrance: the lamp strikes, the bar drops into its light, the copy is yanked in on the slam ---------------- */
   const htmlIn = useRef(reduced)
   const introDone = useRef(reduced)
-  const { contextSafe } = useGSAP(
+  useGSAP(
     () => {
       if (reduced) return
       const items = gsap.utils.toArray('[data-pull]', root.current)
@@ -186,47 +182,13 @@ export function HeroDrop({ ready }) {
       }
       if (introDone.current) return
       introDone.current = true
-
-      const landed = { done: false }
-      const onSlam = () => {
-        if (landed.done) return
-        landed.done = true
-        gsap.to(rig, { dolly: 1, duration: 1.2, ease: 'expo.out' })
-        gsap
-          .timeline()
-          // the slam jolts the tube: a quick dip as the lamp starts to swing
-          .to(rig, { light: 0.55, duration: 0.03, ease: 'none' }, 0.02)
-          .to(rig, { light: 1, duration: 0.09, ease: 'none' }, 0.06)
-          // and the wall comes up with it: a stutter, then the headline is lit
-          .to(rig, { wall: 0.75, duration: 0.04, ease: 'none' }, 0.04)
-          .to(rig, { wall: 0.15, duration: 0.05, ease: 'none' })
-          .to(rig, { wall: 1, duration: 0.7, ease: 'expo.out' })
-        pullIn(0.06)
-      }
       rig.onImpact = (v, n) => {
-        if (n === 1) onSlam()
+        if (n === 1) pullIn(0.04)
         flashRead()
       }
-      gsap
-        .timeline()
-        .set(rig, { light: 0, wall: 0, dolly: 0 })
-        // fluorescent flicker: three blinks over a quarter second, then it holds
-        .to(rig, { light: 1, duration: 0.02, ease: 'none' }, 0.05)
-        .to(rig, { light: 0.05, duration: 0.03, ease: 'none' }, 0.1)
-        .to(rig, { light: 0.9, duration: 0.02, ease: 'none' }, 0.15)
-        .to(rig, { light: 0.2, duration: 0.03, ease: 'none' }, 0.19)
-        .to(rig, { light: 1, duration: 0.05, ease: 'none' }, 0.25)
-        .call(
-          () => {
-            rig.y = rig.dropFrom
-            rig.vy = -2.6
-            rig.mode = 'fall'
-          },
-          null,
-          0.3,
-        )
-        // safety: never leave the copy waiting on the physics
-        .call(onSlam, null, 1.9)
+      startEntrance(rig)
+      // safety: never leave the copy waiting on the physics
+      gsap.delayedCall(1.6, () => pullIn(0))
     },
     { scope: root, dependencies: [go, sceneLive] },
   )
@@ -246,35 +208,6 @@ export function HeroDrop({ ready }) {
     }
   }, [rig, reduced])
 
-  /* ---------------- idle: the tube buzzes now and then (a faint double dip), only while nothing is happening ---------------- */
-  const inViewRef = useRef(inView)
-  useEffect(() => {
-    inViewRef.current = inView
-  }, [inView])
-  useEffect(() => {
-    if (reduced || !go) return
-    let next = null
-    let tl = null
-    const buzz = () => {
-      const idle = inViewRef.current && rig.mode === 'rest' && rig.exit < 0.01 && rig.light > 0.99 && htmlIn.current
-      if (idle) {
-        tl = gsap
-          .timeline()
-          .to(rig, { light: 0.78, duration: 0.03, ease: 'none' })
-          .to(rig, { light: 1, duration: 0.04, ease: 'none' })
-          .to(rig, { light: 0.86, duration: 0.03, ease: 'none' }, '+=0.05')
-          .to(rig, { light: 1, duration: 0.06, ease: 'none' })
-      }
-      next = gsap.delayedCall(gsap.utils.random(7, 12), buzz)
-    }
-    next = gsap.delayedCall(6, buzz)
-    return () => {
-      next?.kill()
-      tl?.kill()
-      if (tl) rig.light = 1
-    }
-  }, [go, reduced, rig])
-
   /* ---------------- scroll exit: hoisted overhead, the light dies, the copy rips upward ---------------- */
   useGSAP(
     () => {
@@ -283,7 +216,8 @@ export function HeroDrop({ ready }) {
         defaults: { ease: 'none' },
         scrollTrigger: { trigger: root.current, start: 'top top', end: 'bottom top', scrub: true, invalidateOnRefresh: true },
       })
-      tl.to(rig, { exit: 1, duration: 1 }, 0)
+      // the rig low-passes exitIn before the scene uses it; the DOM layers track the scroll exactly
+      tl.to(rig, { exitIn: 1, duration: 1 }, 0)
         // the scene holds still in the viewport while the next section slides up over it
         .fromTo(stage.current, { y: 0 }, { y: () => root.current.offsetHeight, duration: 1 }, 0)
         .fromTo(ui.current, { y: 0 }, { y: () => -0.55 * root.current.offsetHeight, duration: 1 }, 0)
@@ -293,40 +227,16 @@ export function HeroDrop({ ready }) {
   )
 
   /* ---------------- power clean: the click / tap / keyboard action ---------------- */
-  const cleanTl = useRef(null)
-  const powerClean = contextSafe(() => {
-    if (rig.mode === 'hold' || rig.mode === 'drag' || rig.mode === 'script' || rig.exit > 0.03) return
-    cleanTl.current?.kill()
-    const top = rig.cleanTop
-    rig.scriptY = rig.y
-    rig.mode = 'script'
-    rig.lifted = true
+  const powerClean = () => {
+    if (rig.exitIn > 0.03) return
+    // from the floor only (a bar still bouncing a few cm is fine: the hands take it as it settles)
+    const onFloor = (rig.mode === 'rest' || rig.mode === 'fall') && rig.y < 0.08
+    if (!onFloor) return
+    beginClean(rig)
     root.current?.classList.add('is-clean')
-    const knee = Math.min(0.42, top * 0.36)
-    const hip = top * 0.82
-    cleanTl.current = gsap
-      .timeline({
-        onComplete: () => {
-          release(rig)
-          rig.vy = 0
-          root.current?.classList.remove('is-clean')
-        },
-      })
-      .to(rig, { scriptY: knee, duration: 0.4, ease: 'sine.in' }) // first pull
-      .to(rig, { scriptY: hip, duration: 0.24, ease: 'none' }) // second pull: explosive
-      .to(rig, { scriptY: top, duration: 0.17, ease: 'power1.out' }) // floats to the catch
-      .to(rig, { scriptY: top - 0.07, duration: 0.16, ease: 'power2.out' }) // caught at the chest
-      .to(rig, { scriptY: top - 0.055, duration: 0.42, ease: 'sine.inOut' }) // hold … then drop
-    if (import.meta.env.DEV) rig.cleanTl = cleanTl.current
-  })
+  }
   const cleanRef = useRef(powerClean)
   cleanRef.current = powerClean
-  useEffect(
-    () => () => {
-      cleanTl.current?.kill()
-    },
-    [],
-  )
 
   /* ---------------- drag to lift (mouse/pen), tap to clean (touch) ---------------- */
   useEffect(() => {
@@ -342,11 +252,8 @@ export function HeroDrop({ ready }) {
 
     const startDrag = () => {
       state = 'drag'
-      cleanTl.current?.kill()
       sec.classList.remove('is-clean')
-      rig.target = Math.max(0, rig.y)
-      rig.mode = 'drag'
-      rig.lifted = true
+      beginDrag(rig)
       sec.classList.add('is-lifting')
     }
     const endDrag = () => {
@@ -354,7 +261,7 @@ export function HeroDrop({ ready }) {
       sec.classList.remove('is-lifting')
     }
     const onDown = (e) => {
-      if (id !== null || rig.exit > 0.03 || rig.mode === 'hold' || rig.mode === 'script') return
+      if (id !== null || rig.exitIn > 0.03 || rig.mode === 'hold' || rig.mode === 'clean') return
       if (e.pointerType === 'mouse' && e.button !== 0) return
       id = e.pointerId
       sx = e.clientX
@@ -411,7 +318,7 @@ export function HeroDrop({ ready }) {
     el.addEventListener('pointercancel', onCancel)
     window.addEventListener('blur', onBlur)
 
-    // desktop: the camera leans toward the pointer
+    // desktop: the camera leans toward the pointer (the rig low-passes it)
     let onLean = null
     if (finePointer() && !reduced) {
       onLean = (e) => {
@@ -433,10 +340,14 @@ export function HeroDrop({ ready }) {
   }, [rig, reduced])
 
   /* ---------------- physics + readout (gsap ticker; text ≤ 20×/s) ---------------- */
-  const read = useRef({ acc: 0, v: '', h: '', hot: null, peak: 0, peakAt: 0 })
+  const read = useRef({ acc: 0, v: '', h: '', hot: null, peak: 0, peakAt: 0, clean: false })
   useTicker((time, deltaMs) => {
     stepRig(rig, (Math.max(deltaMs, 0) / 1000) * (rig.timeScale ?? 1))
     const r = read.current
+    if (r.clean !== (rig.mode === 'clean')) {
+      r.clean = rig.mode === 'clean'
+      if (!r.clean) root.current?.classList.remove('is-clean')
+    }
     // hold the peak speed for a moment so a fast rep or a slam can actually be read
     const speed = Math.abs(rig.vy)
     if (speed >= r.peak || time - r.peakAt > 0.55) {
@@ -473,14 +384,7 @@ export function HeroDrop({ ready }) {
       <div ref={stage} className="hd-stage" aria-hidden="true">
         <SceneBoundary fallback={<DropFallback />}>
           <Suspense fallback={null}>
-            <DropScene
-              rig={rig}
-              active={inView}
-              reduced={reduced}
-              lite={lite}
-              onFrame={onSceneFrame}
-              onLive={onSceneLive}
-            />
+            <DropScene rig={rig} active={inView} reduced={reduced} lite={lite} onLive={onSceneLive} />
           </Suspense>
         </SceneBoundary>
       </div>

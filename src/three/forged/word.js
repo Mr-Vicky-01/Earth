@@ -2,14 +2,11 @@ import * as THREE from 'three'
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { CAP_HEIGHT, glyphPath2D, glyphShapes, layoutText } from '../glyphs'
 import {
-  MIRROR_FRAG_MAIN,
-  MIRROR_FRAG_PARS,
-  MIRROR_VERT_MAIN,
-  MIRROR_VERT_PARS,
   SPLATS,
   STEEL_FRAG_ANISO,
   STEEL_FRAG_EMIT,
   STEEL_FRAG_NORMAL,
+  STEEL_FRAG_OUT,
   STEEL_FRAG_PARS,
   STEEL_FRAG_ROUGH,
   STEEL_FRAG_TEMP,
@@ -107,6 +104,32 @@ function glyphBounds(glyph) {
     }
   }
   return { box, hole }
+}
+
+/**
+ * Where the glyph actually stands on the floor: x spans (object space, centred) of the outline points within a
+ * few millimetres of its lowest point. An italic F stands on its stem only; R on stem and leg; E on its bar.
+ */
+function glyphFeet(glyph, cx, cy) {
+  const s = 1 / CAP_HEIGHT
+  const pts = []
+  let minY = Infinity
+  for (const shape of glyphShapes(glyph)) {
+    for (const p of shape.getPoints(24)) {
+      const x = p.x * s - cx
+      const y = p.y * s - cy
+      pts.push([x, y])
+      if (y < minY) minY = y
+    }
+  }
+  const xs = pts.filter((p) => p[1] < minY + 0.03).map((p) => p[0]).sort((a, b) => a - b)
+  const feet = []
+  for (const x of xs) {
+    const last = feet[feet.length - 1]
+    if (last && x - last[1] < 0.1) last[1] = x
+    else feet.push([x, x])
+  }
+  return feet.map(([a, b]) => [a - 0.03, b + 0.03])
 }
 
 /* 1D squared Euclidean distance transform (Felzenszwalb & Huttenlocher) */
@@ -225,6 +248,8 @@ export function buildWord({ lite = false } = {}) {
       char: it.char,
       geometry: geo,
       sdf,
+      feet: glyphFeet(it.glyph, cx, cy),
+      bottom: bb.min.y,
       // counter centre and size in the letter's object space (the exit flies the camera through the O)
       hole: hole
         ? { x: ((hole.x0 + hole.x1) / 2) * s - cx, y: ((hole.y0 + hole.y1) / 2) * s - cy, w: (hole.x1 - hole.x0) * s, h: (hole.y1 - hole.y0) * s }
@@ -276,6 +301,9 @@ export function createSharedUniforms() {
     uTorch: { value: new THREE.Vector3(1, 0, 0) },
     uGlint: { value: new THREE.Vector4(-9, 0.07, 0, 0) },
     uBump: { value: 0.0032 },
+    // 1 while the floor's reflection pass renders (alpha then carries height above the floor)
+    uMirror: { value: 0 },
+    uFloorY: { value: -0.5 },
   }
 }
 
@@ -313,6 +341,8 @@ export function createSteelMaterial(shared, { rest, seed, lite, sdf }) {
     shader.uniforms.uTorch = shared.uTorch
     shader.uniforms.uGlint = shared.uGlint
     shader.uniforms.uBump = shared.uBump
+    shader.uniforms.uMirror = shared.uMirror
+    shader.uniforms.uFloorY = shared.uFloorY
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${STEEL_VERT_PARS}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${STEEL_VERT_MAIN}`)
@@ -323,40 +353,9 @@ export function createSteelMaterial(shared, { rest, seed, lite, sdf }) {
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${STEEL_FRAG_NORMAL}`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${STEEL_FRAG_EMIT}`)
       .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${STEEL_FRAG_ANISO}`)
+      .replace('#include <dithering_fragment>', `#include <dithering_fragment>\n${STEEL_FRAG_OUT}`)
   }
-  mat.customProgramCacheKey = () => (lite ? 'hf-steel2-lite' : 'hf-steel2')
-  return mat
-}
-
-/**
- * The letter's reflection in the black floor plate: the same geometry mirrored under the floor with a cheap
- * material (no noise, no anisotropy), clipped at the floor and fading with depth below it.
- */
-export function createMirrorMaterial(shared, steel, floorY) {
-  const mat = new THREE.MeshStandardMaterial({ color: '#c9ccd4', metalness: 1, roughness: 0.36, envMapIntensity: 1.1 })
-  const src = steel.userData.uniforms
-  const own = {
-    uTemp: src.uTemp,
-    uTemper: src.uTemper,
-    uRim: src.uRim,
-    uRest: src.uRest,
-    uSdf: src.uSdf,
-    uSdfXf: src.uSdfXf,
-    uFloor: { value: floorY },
-  }
-  mat.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, own)
-    shader.uniforms.uSplats = shared.uSplats
-    shader.uniforms.uSplatOn = shared.uSplatOn
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\n${MIRROR_VERT_PARS}`)
-      .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>\n${MIRROR_VERT_MAIN}`)
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\n${MIRROR_FRAG_PARS}`)
-      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${MIRROR_FRAG_MAIN}`)
-      .replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.rgb *= hfFade;')
-  }
-  mat.customProgramCacheKey = () => 'hf-mirror'
+  mat.customProgramCacheKey = () => (lite ? 'hf-steel3-lite' : 'hf-steel3')
   return mat
 }
 

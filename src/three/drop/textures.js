@@ -488,33 +488,156 @@ export function plateLabel({ kg, ink = PAPER, outerR, innerR, arcR, lite = false
 }
 
 /* ------------------------------------------------------------------ */
-/* Concrete wall (tileable)                                            */
+/* Painted concrete-block wall (tileable): 4 blocks × 8 courses per     */
+/* tile = 1.6 × 1.6 m. 390 × 190 mm blocks, 10 mm tooled joints,        */
+/* running bond, porous faces under two coats of charcoal paint.        */
+/* map: paint albedo · normalMap · roughnessMap: R = cavity AO (read by */
+/* the wall shader for the painted headline), G = roughness.           */
 /* ------------------------------------------------------------------ */
-export function concreteTexture({ lite = false } = {}) {
-  const S = lite ? 256 : 512
-  const c = makeCanvas(S, S)
-  const ctx = c.getContext('2d')
-  const img = ctx.createImageData(S, S)
-  const n = [valueNoise(51, 4), valueNoise(52, 8), valueNoise(53, 16), valueNoise(54, 32)]
-  const fine = valueNoise(55, 128)
-  const rnd = prng(56)
+export const BLOCK_TILE = 1.6 // m
+export function blockWallTextures({ lite = false } = {}) {
+  const S = lite ? 512 : 1024
+  const bw = S / 4 // block module (400 mm)
+  const bh = S / 8 // course (200 mm)
+  const pxm = S / BLOCK_TILE // px per metre
+  const joint = 0.0052 * pxm // half joint width
+  const round = 0.006 * pxm // arris rounding
+  const H = new Float32Array(S * S)
+  const AO = new Float32Array(S * S)
+  const rnd = prng(61)
+  const face = valueNoise(62, 64)
+  const face2 = valueNoise(63, 256)
+  const mott = valueNoise(64, 16)
+  const tone = new Float32Array(32 * 8)
+  for (let i = 0; i < tone.length; i++) tone[i] = (rnd() - 0.5) * 0.06
   for (let y = 0; y < S; y++) {
+    const course = Math.floor(y / bh)
+    const off = course % 2 ? bw / 2 : 0
+    const by = y - course * bh
     for (let x = 0; x < S; x++) {
+      const xx = (x + off) % S
+      const bx = xx % bw
+      const d = Math.min(bx, bw - bx, by, bh - by)
       const u = x / S
       const v = y / S
-      const f = fbm(n, u * 4, v * 4)
-      const g = fine(u * 128, v * 128)
-      let l = 44 + (f - 0.5) * 34 + (g - 0.5) * 10
-      if (rnd() > 0.996) l -= 14 // pores
-      const i = (y * S + x) * 4
-      img.data[i] = l
-      img.data[i + 1] = l + 1
-      img.data[i + 2] = l + 5
-      img.data[i + 3] = 255
+      let h
+      let ao
+      if (d < joint) {
+        // concave tooled joint, 5 mm deep
+        const k = d / joint
+        h = -1 + 0.35 * k * k
+        ao = 0.5 + 0.2 * k
+      } else {
+        const e = Math.min(1, (d - joint) / round)
+        h = -0.45 * (1 - e * e) + (face(u * 64, v * 64) - 0.5) * 0.08 + (face2(u * 256, v * 256) - 0.5) * 0.05
+        ao = 0.86 + 0.14 * e
+      }
+      H[y * S + x] = h
+      AO[y * S + x] = ao
     }
   }
-  ctx.putImageData(img, 0, 0)
-  return c
+  // pores and small pits in the block faces (paint bridges some, not all)
+  const pits = (lite ? 2600 : 9000) * (S / 1024) ** 2
+  for (let i = 0; i < pits; i++) {
+    const cx = rnd() * S
+    const cy = rnd() * S
+    const r = 0.6 + rnd() * rnd() * 3.2 * (S / 1024)
+    const depth = 0.25 + rnd() * 0.5
+    for (let yy = Math.floor(cy - r); yy <= cy + r; yy++) {
+      for (let xx = Math.floor(cx - r); xx <= cx + r; xx++) {
+        const q = Math.hypot(xx - cx, yy - cy) / r
+        if (q > 1) continue
+        const j = ((yy + S) % S) * S + ((xx + S) % S)
+        const k = 1 - q * q
+        H[j] -= depth * k
+        AO[j] *= 1 - 0.35 * k * depth
+      }
+    }
+  }
+  const mapC = makeCanvas(S, S)
+  const nrmC = makeCanvas(S, S)
+  const rghC = makeCanvas(S, S)
+  const mi = mapC.getContext('2d').createImageData(S, S)
+  const ni = nrmC.getContext('2d').createImageData(S, S)
+  const ri = rghC.getContext('2d').createImageData(S, S)
+  // normal strength: 5 mm joint over `joint` px
+  const strength = (0.005 * pxm) / 1.0
+  const at = (x, y) => H[((y + S) % S) * S + ((x + S) % S)]
+  for (let y = 0; y < S; y++) {
+    const course = Math.floor(y / bh)
+    const off = course % 2 ? bw / 2 : 0
+    for (let x = 0; x < S; x++) {
+      const i = y * S + x
+      const o = i * 4
+      const dx = (at(x - 1, y) - at(x + 1, y)) * 0.5 * strength
+      const dy = (at(x, y + 1) - at(x, y - 1)) * 0.5 * strength
+      const len = Math.hypot(dx, dy, 1)
+      ni.data[o] = ((dx / len) * 0.5 + 0.5) * 255
+      ni.data[o + 1] = ((dy / len) * 0.5 + 0.5) * 255
+      ni.data[o + 2] = ((1 / len) * 0.5 + 0.5) * 255
+      ni.data[o + 3] = 255
+      // charcoal paint, each block a hair different, roller mottling, darker in the cavities
+      const blk = Math.floor(((x + off) % S) / bw) + course * 4
+      const m = (mott(x / 64, y / 64) - 0.5) * 0.07
+      const l = (1 + tone[blk % tone.length] + m) * (0.8 + 0.2 * AO[i])
+      mi.data[o] = Math.max(0, Math.min(255, 62 * l))
+      mi.data[o + 1] = Math.max(0, Math.min(255, 64 * l))
+      mi.data[o + 2] = Math.max(0, Math.min(255, 70 * l))
+      mi.data[o + 3] = 255
+      ri.data[o] = Math.round(255 * AO[i])
+      ri.data[o + 1] = Math.round(255 * (0.6 + (1 - AO[i]) * 0.5 + m))
+      ri.data[o + 2] = 0
+      ri.data[o + 3] = 255
+    }
+  }
+  mapC.getContext('2d').putImageData(mi, 0, 0)
+  nrmC.getContext('2d').putImageData(ni, 0, 0)
+  rghC.getContext('2d').putImageData(ri, 0, 0)
+  return {
+    map: finish(new THREE.CanvasTexture(mapC)),
+    normalMap: finish(new THREE.CanvasTexture(nrmC), { srgb: false }),
+    roughnessMap: finish(new THREE.CanvasTexture(rghC), { srgb: false }),
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Tileable fBm noise, four independent channels (haze density, chalk  */
+/* puffs, grime and scuffs on the wall and floor). Linear data.         */
+/* ------------------------------------------------------------------ */
+export function noiseTexture({ size = 256 } = {}) {
+  // a DataTexture, not a canvas: canvas storage premultiplies alpha and would wreck the fourth channel
+  const img = { data: new Uint8Array(size * size * 4) }
+  const ch = [0, 1, 2, 3].map((k) => [4, 8, 16, 32].map((p, j) => valueNoise(301 + k * 10 + j, p)))
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size
+      const v = y / size
+      const o = (y * size + x) * 4
+      for (let k = 0; k < 4; k++) {
+        const n = ch[k]
+        let s = 0
+        let amp = 0.5
+        let norm = 0
+        for (let j = 0; j < n.length; j++) {
+          const p = 4 * 2 ** j
+          s += n[j](u * p, v * p) * amp
+          norm += amp
+          amp *= 0.5
+        }
+        // stretch the contrast a little (fBm bunches round 0.5)
+        const val = Math.min(1, Math.max(0, (s / norm - 0.5) * 1.7 + 0.5))
+        img.data[o + k] = Math.round(val * 255)
+      }
+    }
+  }
+  const t = new THREE.DataTexture(img.data, size, size, THREE.RGBAFormat)
+  t.colorSpace = THREE.NoColorSpace
+  t.wrapS = t.wrapT = THREE.RepeatWrapping
+  t.magFilter = THREE.LinearFilter
+  t.minFilter = THREE.LinearMipmapLinearFilter
+  t.generateMipmaps = true
+  t.needsUpdate = true
+  return t
 }
 
 /* ------------------------------------------------------------------ */

@@ -399,12 +399,13 @@ export function solveFrame(w, h, type, band) {
   applyPose(cam, f, { dolly: 0, follow: 0 }, w, h, _P, _L)
   _plane.set(new THREE.Vector3(0, 0, 1), 0)
   const hit = new THREE.Vector3()
-  let frameTop = 2
-  for (const x of [-0.8, 0, 0.8]) {
+  let frameTop = 0.5
+  for (const x of [-0.84, -0.7, 0, 0.7, 0.84]) {
     toPx(_v.set(x, 0, 0), w, h, pa)
-    if (rayAt(pa.x, -0.06 * h, w, h).intersectPlane(_plane, hit)) frameTop = Math.max(frameTop, hit.y)
+    if (rayAt(pa.x, 0, w, h).intersectPlane(_plane, hit)) frameTop = Math.max(frameTop, hit.y)
   }
-  f.dropFrom = frameTop + PLATE_R + 0.5
+  // lift at which the plates' lowest point sits just above the top edge: the fall is seen from its first cm
+  f.dropFrom = frameTop + 0.035
 
   // 5. lift range: how high the bar centre may go on screen, and the crane-follow that keeps 1 m inside it
   const topY = Math.max(p.top * h, B.top - 0.02 * h)

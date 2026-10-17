@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { PerformanceMonitor } from '@react-three/drei'
-import { EffectComposer, Bloom, ChromaticAberration, ToneMapping, Vignette, Noise } from '@react-three/postprocessing'
-import { ToneMappingMode, BlendFunction } from 'postprocessing'
+import { EffectComposer, Bloom, ToneMapping, Vignette, Noise } from '@react-three/postprocessing'
+import { ToneMappingMode, BlendFunction, EffectPass } from 'postprocessing'
 import { PLATE_R } from './sim'
 import { LIFT_MAX, followFor, liftUnder, pointOnBarPlane, poseCamera, solveFrame } from './frame.js'
 import {
@@ -20,26 +20,40 @@ import {
   springCollarGeometry,
   labelOffset,
 } from './parts'
-import { concreteTexture, headlineTexture, knurlTextures, plateLabel, rubberTextures, spotCookie, woodTextures } from './textures'
 import {
-  barFx,
-  coneMaterial,
-  createBarUniforms,
-  dustGeometry,
-  dustMaterial,
-  flareMaterial,
-  ghostMaterial,
-  motesGeometry,
-  motesMaterial,
-} from './fx'
+  blockWallTextures,
+  headlineTexture,
+  knurlTextures,
+  noiseTexture,
+  plateLabel,
+  rubberTextures,
+  spotCookie,
+  woodTextures,
+} from './textures'
+import { barFx, createBarUniforms, flareMaterial, ghostMaterial, motesGeometry, motesMaterial, puffGeometry, puffMaterial } from './fx'
+import { DropLensEffect } from './lens'
+import {
+  FLOOR_Y,
+  WALL_H,
+  WALL_W,
+  ceilingGeometry,
+  coveGeometry,
+  floorFx,
+  layoutProps,
+  placeHeadline,
+  roomMaterials,
+  roomProps,
+  wallMaterial,
+} from './room'
 
 /**
- * THE DROP: a dark gym, one hard spotlight, a lifting platform and a loaded bar. The section owns the physics
- * (`rig`, see sim.js) and choreography; this scene reads the rig each frame and renders it. Framing (camera,
- * headline placement, lift range, crane follow) lives in frame.js so the pointer mapping uses the same camera.
+ * THE DROP: a gym in low light, one pendant lamp over a lifting platform, a loaded bar. The section owns the
+ * physics and look state (`rig`, see sim.js); this scene reads the rig each frame and renders it. Framing
+ * (camera, headline placement, lift range, crane follow) lives in frame.js so the pointer mapping uses the same
+ * camera. Every shader and texture is compiled and uploaded before the first visible frame (see `warm`).
  */
 
-const BG = '#060609'
+const BG = '#0b0c10'
 const COLOURS = { heat: '#ff4b1f', cobalt: '#2236ff', paper: '#efeee9' }
 const INK = { heat: '#f4f3ee', cobalt: '#f4f3ee', paper: '#16161e' }
 // the pendant lamp hangs 0.7 m from a ceiling pivot and swings after a slam
@@ -49,14 +63,20 @@ const SPOT_POS = LAMP_PIVOT.clone().add(new THREE.Vector3(0, -LAMP_DROP, 0))
 const SPOT_AIM = new THREE.Vector3(0, 0, -0.1)
 const SPOT_ANGLE = 0.38 // the cookie shapes the pool inside this cone
 const POOL = { halfX: 1.45, halfZ: 0.68, offZ: -0.16 } // barn-door slot of light on the floor (m)
-const CONE_ANGLE = 0.15 // the visible core of the beam (haze is only seen where the light is brightest)
-const LIT_ANGLE = 0.36 // where motes catch the light
 const SPOT_I = 140
-const KEY_I = 440 // distant low key from camera-left: lights the wall, throws the plates' shadows on "FAST."
+const KEY_I = 440 // distant low wall wash from camera-left: lights the wall, throws the plates' shadows on "FAST."
+const BOUNCE_I = 2.6 // the lit platform bounces warm light back up
 const HEADLINE = ['Move it', 'fast.']
 const SHADOWS = { enabled: true, type: THREE.PCFShadowMap }
-const GHOST_ALPHA = [0.24, 0.15, 0.08, 0.035]
+const GHOST_ALPHA = [0.4, 0.32, 0.24, 0.16, 0.08]
 const GHOSTS = GHOST_ALPHA.length
+const SHUTTER = 0.9 / 60 // s: a 324° shutter at 60 fps
+// haze (linear radiance units; tuned against the lights above)
+const HAZE_SCATTER = 0.0105
+const HAZE_SIGMA = 0.028
+const HAZE_AMB = new THREE.Color(0.0046, 0.005, 0.0062)
+const LAMP_COL = new THREE.Color('#f7f5f0')
+const BOUNCE_COL = new THREE.Color('#ffcf9e')
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v)
 const smooth = (a, b, x) => {
@@ -89,8 +109,8 @@ function buildEnv(gl) {
   add(new THREE.PlaneGeometry(1.0, 8), '#e8ecff', 1.7, [7, 1.5, 1], [0, -Math.PI / 2.4, 0])
   // camera-side panel → the front of the shaft and collars read silver
   add(new THREE.PlaneGeometry(9, 2.4), '#f2f2f0', 1.1, [0, 1.2, 8], [0, Math.PI, 0])
-  // light floor bounce → undersides stay silver
-  add(new THREE.PlaneGeometry(24, 24), '#c9ccd6', 0.7, [0, -2.5, 0], [-Math.PI / 2, 0, 0])
+  // warm floor bounce off the lit platform → undersides stay silver, a touch warm
+  add(new THREE.PlaneGeometry(24, 24), '#d4cbbf', 0.7, [0, -2.5, 0], [-Math.PI / 2, 0, 0])
   // one warm accent, low behind-right
   add(new THREE.PlaneGeometry(1.2, 3), '#ff4b1f', 1.4, [5, 0.4, -5], [0, -Math.PI / 4, 0])
   const pmrem = new THREE.PMREMGenerator(gl)
@@ -119,37 +139,29 @@ function useAssets(lite) {
     rubberTop.roughnessMap.wrapS = rubberTop.roughnessMap.wrapT = THREE.RepeatWrapping
     rubberTop.map.repeat.set(1.2, 4.8)
     rubberTop.roughnessMap.repeat.set(1.2, 4.8)
-    const concrete = new THREE.CanvasTexture(concreteTexture({ lite }))
-    concrete.colorSpace = THREE.SRGBColorSpace
-    concrete.wrapS = concrete.wrapT = THREE.RepeatWrapping
-    concrete.repeat.set(9, 4)
+    const block = blockWallTextures({ lite })
+    const noise = noiseTexture({ size: 256 })
     const headline = headlineTexture({ lines: HEADLINE, lite })
     const cookie = spotCookie({ angle: SPOT_ANGLE, height: SPOT_POS.distanceTo(SPOT_AIM), ...POOL, size: lite ? 128 : 256 })
 
     const steel = (o = {}) =>
-      barFx(
-        new THREE.MeshStandardMaterial({
-          color: '#d3d6de',
-          metalness: 1,
-          roughness: 0.3,
-          envMapIntensity: 1,
-          ...o,
-        }),
-        uniforms,
-      )
+      new THREE.MeshStandardMaterial({
+        color: '#d3d6de',
+        metalness: 1,
+        roughness: 0.3,
+        envMapIntensity: 1,
+        ...o,
+      })
     const rubber = (key) =>
-      barFx(
-        new THREE.MeshPhysicalMaterial({
-          color: COLOURS[key],
-          roughness: key === 'paper' ? 0.6 : 0.56,
-          metalness: 0,
-          sheen: key === 'cobalt' ? 0.1 : 0.2,
-          sheenRoughness: 0.5,
-          sheenColor: new THREE.Color(COLOURS[key]).lerp(new THREE.Color('#ffffff'), key === 'cobalt' ? 0.05 : 0.2),
-          envMapIntensity: 0.3,
-        }),
-        uniforms,
-      )
+      new THREE.MeshPhysicalMaterial({
+        color: COLOURS[key],
+        roughness: key === 'paper' ? 0.6 : 0.56,
+        metalness: 0,
+        sheen: key === 'cobalt' ? 0.1 : 0.2,
+        sheenRoughness: 0.5,
+        sheenColor: new THREE.Color(COLOURS[key]).lerp(new THREE.Color('#ffffff'), key === 'cobalt' ? 0.05 : 0.2),
+        envMapIntensity: 0.3,
+      })
 
     const mats = {
       shaft: barFx(
@@ -169,7 +181,7 @@ function useAssets(lite) {
       sleeve: steel({ roughness: 0.24, color: '#d8dbe2' }),
       hub: steel({ roughness: 0.2, color: '#dcdfe6' }),
       wire: steel({ roughness: 0.32 }),
-      grip: barFx(new THREE.MeshStandardMaterial({ color: '#1c1c22', roughness: 0.55, envMapIntensity: 0.4 }), uniforms),
+      grip: new THREE.MeshStandardMaterial({ color: '#1c1c22', roughness: 0.55, envMapIntensity: 0.4 }),
       heat: rubber('heat'),
       cobalt: rubber('cobalt'),
       paper: rubber('paper'),
@@ -188,35 +200,29 @@ function useAssets(lite) {
       }),
       rubberEdge: new THREE.MeshStandardMaterial({ color: '#121216', roughness: 0.8, envMapIntensity: 0.25 }),
       frame: new THREE.MeshStandardMaterial({ color: '#202129', metalness: 0.75, roughness: 0.42, envMapIntensity: 0.6 }),
-      floor: new THREE.MeshStandardMaterial({
-        map: floorTex.map,
-        roughnessMap: floorTex.roughnessMap,
-        roughness: 1,
-        color: '#b4b4ba',
-        envMapIntensity: 0.12,
-      }),
-      wall: new THREE.MeshStandardMaterial({ map: concrete, roughness: 0.94, color: '#5c5e6a' }),
-      paint: new THREE.MeshStandardMaterial({
-        map: headline.texture,
-        color: '#ebeae6',
-        transparent: true,
-        roughness: 0.78,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -2,
-      }),
+      floor: floorFx(
+        new THREE.MeshStandardMaterial({
+          map: floorTex.map,
+          roughnessMap: floorTex.roughnessMap,
+          roughness: 1,
+          color: '#b4b4ba',
+          envMapIntensity: 0.12,
+        }),
+        noise,
+      ),
+      wall: wallMaterial({ block, headline: headline.texture, noise }),
       shade: new THREE.MeshStandardMaterial({ color: '#17181f', metalness: 0.7, roughness: 0.38, side: THREE.DoubleSide }),
-      refl: new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, fog: false }),
-      lens: new THREE.MeshBasicMaterial({ color: new THREE.Color('#fff4e4').multiplyScalar(14), fog: false }),
-      lensRim: new THREE.MeshBasicMaterial({ color: new THREE.Color('#fff1dc').multiplyScalar(24), fog: false, side: THREE.DoubleSide }),
+      refl: new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }),
+      lens: new THREE.MeshBasicMaterial({ color: new THREE.Color('#fff4e4').multiplyScalar(14) }),
+      lensRim: new THREE.MeshBasicMaterial({ color: new THREE.Color('#fff1dc').multiplyScalar(24), side: THREE.DoubleSide }),
       cable: new THREE.MeshBasicMaterial({ color: '#040405' }),
       guard: new THREE.MeshStandardMaterial({ color: '#2a2b33', metalness: 0.6, roughness: 0.5 }),
       ao: new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, depthWrite: false, alphaMap: aoTexture(), opacity: 0.85 }),
-      cone: coneMaterial(),
       motes: motesMaterial(),
-      dust: [dustMaterial(), dustMaterial()],
-      ghosts: PLATES.map((p) => ghostMaterial(new THREE.Color(COLOURS[p.key]).multiplyScalar(0.5))),
+      puffs: [puffMaterial(noise), puffMaterial(noise)],
+      ghosts: PLATES.map((p) => ghostMaterial(new THREE.Color(COLOURS[p.key]).multiplyScalar(0.55))),
       flare: flareMaterial(),
+      ...roomMaterials(),
     }
     // printed faces, one texture per plate size
     const labels = {}
@@ -230,22 +236,20 @@ function useAssets(lite) {
         arcR: spec.kg === '5' ? null : outer - 0.0115,
         lite,
       })
-      labels[spec.kg] = barFx(
-        new THREE.MeshStandardMaterial({
-          map,
-          transparent: true,
-          roughness: 0.48,
-          metalness: 0,
-          depthWrite: false,
-          polygonOffset: true,
-          polygonOffsetFactor: -3,
-          envMapIntensity: 0.3,
-        }),
-        uniforms,
-      )
+      labels[spec.kg] = new THREE.MeshStandardMaterial({
+        map,
+        transparent: true,
+        roughness: 0.48,
+        metalness: 0,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -3,
+        envMapIntensity: 0.3,
+      })
     }
 
     const layout = plateLayout()
+    const puffCount = lite ? 26 : 44
     const geo = {
       shaft: shaftGeometry(lite),
       sleeveR: sleeveGeometry(1, lite),
@@ -259,15 +263,9 @@ function useAssets(lite) {
       collar: springCollarGeometry(lite),
       platform: platformGeometry(),
       lamp: lampGeometry(),
-      cone: (() => {
-        const H = SPOT_POS.distanceTo(SPOT_AIM) * 1.03
-        const g = new THREE.ConeGeometry(Math.tan(CONE_ANGLE) * H, H, 72, 1, true)
-        g.translate(0, -H / 2, 0)
-        return { g, H }
-      })(),
-      motes: motesGeometry(lite ? 150 : 320),
-      dust: [dustGeometry(lite ? 520 : 1100, 41), dustGeometry(lite ? 520 : 1100, 42)],
-      // motion ghosts: low-res copies of the plate bodies with a per-instance alpha (two sides × GHOSTS echoes)
+      motes: motesGeometry(lite ? 160 : 300),
+      puffs: [puffGeometry(puffCount, 41), puffGeometry(puffCount, 42)],
+      // shutter trails: low-res copies of the plate bodies with a per-instance alpha (two sides × GHOSTS echoes)
       ghosts: PLATES.map((spec) => {
         const g = plateRubberGeometry(spec, true)
         const a = new Float32Array(2 * GHOSTS)
@@ -278,8 +276,10 @@ function useAssets(lite) {
       flare: new THREE.PlaneGeometry(1, 1),
       ao: new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
       floor: new THREE.PlaneGeometry(40, 40).rotateX(-Math.PI / 2),
-      wall: new THREE.PlaneGeometry(36, 14),
-      paint: new THREE.PlaneGeometry(1, 1),
+      wall: new THREE.PlaneGeometry(WALL_W, WALL_H),
+      cove: coveGeometry(),
+      ceiling: ceilingGeometry(),
+      props: roomProps(),
     }
     const textures = [
       knurl.map,
@@ -291,13 +291,16 @@ function useAssets(lite) {
       rubberTop.roughnessMap,
       floorTex.map,
       floorTex.roughnessMap,
-      concrete,
+      block.map,
+      block.normalMap,
+      block.roughnessMap,
+      noise,
       headline.texture,
       cookie,
       mats.ao.alphaMap,
       ...Object.values(labels).map((m) => m.map),
     ]
-    return { uniforms, mats, labels, geo, layout, headline, cookie, textures }
+    return { uniforms, mats, labels, geo, layout, headline, cookie, noise, textures }
   }, [lite])
 }
 
@@ -321,18 +324,20 @@ function disposeAssets(A) {
   for (const m of Object.values(A.labels)) m.dispose()
   A.textures.forEach((t) => t.dispose())
   const g = A.geo
-  ;[g.shaft, g.sleeveR, g.collar.coil, g.collar.grips, g.flare, g.ao, g.floor, g.wall, g.paint, g.motes, ...g.dust, ...g.ghosts].forEach((x) =>
+  ;[g.shaft, g.sleeveR, g.collar.coil, g.collar.grips, g.flare, g.ao, g.floor, g.wall, g.cove, g.motes, ...g.puffs, ...g.ghosts].forEach((x) =>
     x.dispose(),
   )
+  g.ceiling.deck.dispose()
+  g.ceiling.joists.dispose()
+  g.props.forEach((p) => p.parts.forEach((q) => q.geo.dispose()))
   g.plates.forEach((p) => [p.rubber, p.hub, p.label].forEach((x) => x.dispose()))
   Object.values(g.platform).forEach((x) => x?.dispose?.())
   Object.values(g.lamp).forEach((x) => x.dispose())
-  g.cone.g.dispose()
 }
 
 /* ------------------------------------------------------------------ */
-function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
-  const { gl, camera, size } = useThree()
+function World({ rig, lite, reduced, onWarm, composerRef, lens }) {
+  const { gl, camera, scene, size } = useThree()
   const A = useAssets(lite)
   const { mats, labels, geo, layout, uniforms } = A
 
@@ -350,6 +355,12 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
       mats.paper,
       mats.frame,
       mats.shade,
+      mats.powder,
+      mats.rubber,
+      mats.iron,
+      mats.cove,
+      mats.joist,
+      mats.ball,
       ...Object.values(labels),
     ]
     list.forEach((m) => {
@@ -373,6 +384,7 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
   }
   const plateRefs = useRef([])
   const rubberRefs = useRef([])
+  const propRefs = useRef([])
 
   const F = useRef({ w: 0, h: 0, ver: -1, f: null, grab: { x: -1, y: -1, l: -1, a: 9, t: -1, on: null } })
   const tmp = useMemo(
@@ -385,19 +397,24 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
       exitPos: new THREE.Vector3(),
       exitLook: new THREE.Vector3(),
       hit: new THREE.Vector3(),
+      bar: new THREE.Vector3(),
       m: new THREE.Matrix4(),
       t: new THREE.Matrix4(),
       eu: new THREE.Euler(),
       sq: new THREE.Quaternion(),
       lampQ: new THREE.Quaternion(),
-      coneQ: new THREE.Quaternion(),
       lampPos: new THREE.Vector3(),
       axis: new THREE.Vector3(),
-      hang: new THREE.Vector3(),
+      lx: new THREE.Vector3(),
+      ly: new THREE.Vector3(),
+      up: new THREE.Vector3(0, 0, -1),
+      keyDir: new THREE.Vector3(),
+      col: new THREE.Color(),
       aimRel: SPOT_AIM.clone().sub(SPOT_POS),
       pose: { dolly: 1, follow: 0, px: 0, py: 0, lean: 1 },
       follow: 0,
       frames: 0,
+      dt: 0,
     }),
     [],
   )
@@ -418,8 +435,8 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
       const s = tmp.pose
       s.dolly = rig.dolly
       s.follow = tmp.follow
-      s.px = rig.px
-      s.py = rig.py
+      s.px = rig.lx
+      s.py = rig.ly
       s.lean = reduced ? 0 : 1
       return s
     }
@@ -445,64 +462,74 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
   useEffect(() => {
     // cookie orientation: u along world x, v along world -z
     if (R.spot) R.spot.shadow.camera.up.set(0, 0, -1)
-    mats.cone.uniforms.uApexY.value = SPOT_POS.y
-    mats.cone.uniforms.uHeight.value = SPOT_POS.y
-    mats.motes.uniforms.uCos.value = Math.cos(LIT_ANGLE)
+    mats.motes.uniforms.uSlot.value.set(POOL.halfX / SPOT_POS.y, POOL.halfZ / SPOT_POS.y)
+    for (const m of mats.puffs) m.uniforms.uSlot.value.set(POOL.halfX / SPOT_POS.y, POOL.halfZ / SPOT_POS.y)
   }, [mats, R])
 
-  useFrame((state, delta) => {
-    const dt = Math.min(delta, 1 / 20)
-    const t = state.clock.elapsedTime
-    const { width: w, height: h } = size
+  /* ---------- framing: only on resize / layout change ---------- */
+  const frameFor = (w, h) => {
     const fr = F.current
-
-    /* ---------- framing (only on resize / layout change) ---------- */
     const band = rig.band && rig.band.h === h ? rig.band : null
     const ver = band ? band.ver : -1
-    if (fr.w !== w || fr.h !== h || fr.ver !== ver || !fr.f) {
-      fr.w = w
-      fr.h = h
-      fr.ver = ver
-      fr.f = solveFrame(w, h, A.headline.layout, band)
-      const f = fr.f
-      rig.frame = f
-      rig.maxLift = reduced ? f.maxLiftStill : LIFT_MAX
-      rig.cleanTop = reduced ? Math.min(LIFT_MAX, f.maxLiftStill) : LIFT_MAX
-      rig.dropFrom = f.dropFrom
-      if (rig.mode === 'hold') rig.y = f.dropFrom
-      // wall + painted headline square to the camera
-      if (R.wall) {
-        R.wall.position.set(f.wallPoint.x, 7 - 0.045, f.wallPoint.z)
-        R.wall.rotation.set(0, f.wallYaw, 0)
-      }
-      if (R.paint) {
-        R.paint.position.copy(f.typeCenter)
-        R.paint.rotation.set(0, f.wallYaw, 0)
-        R.paint.scale.set(f.typeWidth, f.typeHeight, 1)
-      }
-      // key light: far out in front-left at plate height, so the plates' shadows land across "FAST."
-      if (R.key) {
-        R.key.position.copy(f.typeCenter).addScaledVector(f.n, 11.2).addScaledVector(f.right, -2.6)
-        R.key.position.y = 1.15
-        R.key.target.position.copy(f.typeCenter)
-        R.key.target.position.y -= f.typeHeight * 0.12
-        R.key.target.updateMatrixWorld()
-      }
-      if (R.rim) {
-        R.rim.position.copy(f.target).addScaledVector(f.n, -2.1).addScaledVector(f.right, 0.6)
-        R.rim.position.y = 1.15
-        R.rim.target.position.set(0, PLATE_R, 0)
-        R.rim.target.updateMatrixWorld()
-      }
-      // particles fade where the HTML copy sits (NDC rectangle)
-      const cb = band && band.blocks && band.blocks[0]
-      for (const m of mats.dust) {
-        if (cb) m.uniforms.uCopy.value.set((cb.x0 / w) * 2 - 1, 1 - ((cb.y1 ?? h) / h) * 2, (cb.x1 / w) * 2 - 1, 1 - (cb.y0 / h) * 2)
-        else m.uniforms.uCopy.value.set(9, 9, 9, 9)
-      }
-      fr.grab.l = -1
-    }
+    if (fr.w === w && fr.h === h && fr.ver === ver && fr.f) return fr.f
+    fr.w = w
+    fr.h = h
+    fr.ver = ver
+    fr.f = solveFrame(w, h, A.headline.layout, band)
     const f = fr.f
+    rig.frame = f
+    rig.maxLift = reduced ? f.maxLiftStill : LIFT_MAX
+    rig.cleanTop = reduced ? Math.min(LIFT_MAX, f.maxLiftStill) : LIFT_MAX
+    // just above the top of the frame (entrance pose): the drop is seen from its first centimetre
+    rig.dropFrom = f.dropFrom
+    if (rig.mode === 'hold') rig.y = f.dropFrom
+    // wall with the painted headline, square to the camera
+    if (R.wall) {
+      R.wall.position.set(f.wallPoint.x, FLOOR_Y + WALL_H / 2, f.wallPoint.z)
+      R.wall.rotation.set(0, f.wallYaw, 0)
+    }
+    placeHeadline(mats.wall, f)
+    // the kit along the wall, placed from the headline; anything that would cover a letter stays out
+    if (R.room) {
+      R.room.position.set(f.wallPoint.x, FLOOR_Y, f.wallPoint.z)
+      R.room.rotation.set(0, f.wallYaw, 0)
+    }
+    const spots = layoutProps(geo.props, f, A.headline.layout, f.pos)
+    spots.forEach((s, i) => {
+      const g = propRefs.current[i]
+      if (!g) return
+      g.position.set(s.u, 0, 0)
+      g.visible = s.visible
+    })
+    // key light: far out in front-left at plate height, so the plates' shadows land across "FAST."
+    if (R.key) {
+      R.key.position.copy(f.typeCenter).addScaledVector(f.n, 11.2).addScaledVector(f.right, -2.6)
+      R.key.position.y = 1.15
+      R.key.target.position.copy(f.typeCenter)
+      R.key.target.position.y -= f.typeHeight * 0.12
+      R.key.target.updateMatrixWorld()
+      tmp.keyDir.copy(R.key.position).sub(f.target).normalize()
+      for (const m of mats.puffs) m.uniforms.uKeyDir.value.copy(tmp.keyDir)
+    }
+    if (R.rim) {
+      R.rim.position.copy(f.target).addScaledVector(f.n, -2.1).addScaledVector(f.right, 0.6)
+      R.rim.position.y = 1.15
+      R.rim.target.position.set(0, PLATE_R, 0)
+      R.rim.target.updateMatrixWorld()
+    }
+    // particles fade where the HTML copy sits (NDC rectangle)
+    const cb = band && band.blocks && band.blocks[0]
+    for (const m of mats.puffs) {
+      if (cb) m.uniforms.uCopy.value.set((cb.x0 / w) * 2 - 1, 1 - ((cb.y1 ?? h) / h) * 2, (cb.x1 / w) * 2 - 1, 1 - (cb.y0 / h) * 2)
+      else m.uniforms.uCopy.value.set(9, 9, 9, 9)
+    }
+    fr.grab.l = -1
+    return f
+  }
+
+  /* ---------- per-frame: pose everything from the rig ---------- */
+  const drive = (t, w, h, dpr) => {
+    const f = frameFor(w, h)
 
     /* ---------- bar ---------- */
     const ex = reduced ? 0 : rig.exit
@@ -511,12 +538,11 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
     const barY = PLATE_R + lift
     // overhead the bar drifts forward under the lamp, so it crosses the light as the camera looks up
     const barZ = rig.z + 0.42 * smooth(0.12, 0.45, ex)
-    if (R.barPos) R.barPos.position.set(0, barY, barZ)
+    tmp.bar.set(0, barY, barZ)
+    if (R.barPos) R.barPos.position.copy(tmp.bar)
     if (R.barRot) R.barRot.rotation.x = rig.spin
     uniforms.uBend.value = rig.bend
     const vy = rig.vy
-    uniforms.uSmearDir.value.set(0, vy >= 0 ? 1 : -1, 0)
-    uniforms.uSmear.value = reduced ? 0 : Math.min(0.62, rig.blur * 0.62)
     const pr = plateRefs.current
     for (let i = 0; i < pr.length; i++) {
       const g = pr[i]
@@ -524,17 +550,17 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
       const p = rig.plates[i]
       g.rotation.set(p.spin, p.ry, p.rz)
     }
-    // motion ghosts: three fading echoes of each plate, trailing along the motion
-    const gAmt = reduced ? 0 : rig.blur
-    const ghostsOn = gAmt > 0.02 && ex < 0.02
+    // shutter trails: echoes spread over speed × shutter time, trailing the motion
+    const sp = Math.abs(vy)
+    const gAmt = reduced ? 0 : smooth(0.7, 1.8, sp)
+    const ghostsOn = gAmt > 0.01 && ex < 0.02
     for (let k = 0; k < 3; k++) {
       const gm = R[`ghost${k}`]
       if (gm) gm.visible = ghostsOn
     }
     if (ghostsOn && R.barPos) {
       R.barPos.updateMatrixWorld(true)
-      // echoes a few centimetres apart: they overlap into a blur rather than reading as separate plates
-      const step = Math.min(Math.abs(vy) * 0.014, 0.065) * (vy >= 0 ? -1 : 1)
+      const step = ((sp * SHUTTER) / GHOSTS) * (vy >= 0 ? -1 : 1)
       const rr = rubberRefs.current
       for (let k = 0; k < 3; k++) {
         const gm = R[`ghost${k}`]
@@ -572,74 +598,80 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
       R.lamp.position.copy(tmp.lampPos)
       R.lamp.quaternion.copy(tmp.lampQ)
     }
-    if (R.cone) {
-      R.cone.position.copy(tmp.lampPos)
-      R.cone.quaternion.copy(tmp.lampQ)
-    }
     if (R.spot) {
       R.spot.position.copy(tmp.lampPos)
       R.spot.target.position.copy(tmp.lampPos).add(tmp.axis)
       R.spot.target.updateMatrixWorld()
     }
     tmp.axis.normalize()
-    // where the beam's axis meets the floor → centre of the pool (for the dust)
+    // the cookie's frame, exactly as three's spot shadow camera builds it (up = -z)
+    tmp.c.copy(tmp.axis).negate()
+    tmp.lx.crossVectors(tmp.up, tmp.c).normalize()
+    tmp.ly.crossVectors(tmp.c, tmp.lx)
     const toFloor = tmp.lampPos.y / Math.max(0.2, -tmp.axis.y)
-    const poolX = tmp.lampPos.x + tmp.axis.x * toFloor
-    const poolZ = tmp.lampPos.z + tmp.axis.z * toFloor + POOL.offZ
-    mats.motes.uniforms.uApex.value.copy(tmp.lampPos)
-    mats.motes.uniforms.uAxis.value.copy(tmp.axis)
+    if (R.bounce) R.bounce.position.set(tmp.lampPos.x + tmp.axis.x * toFloor, 0.32, tmp.lampPos.z + tmp.axis.z * toFloor + POOL.offZ)
 
     /* ---------- light ---------- */
     const dark = 1 - smooth(0.55, 0.75, ex)
     const L = rig.light * dark
-    const liftDim = rig.lifted ? 1 - 0.3 * smooth(0.3, 1.0, rig.y) : 1
+    const wallK = rig.wall * dark * (1 - smooth(0.08, 0.3, ex))
     if (R.spot) R.spot.intensity = SPOT_I * L
-    if (R.key) R.key.intensity = KEY_I * rig.wall * dark * liftDim * (1 - smooth(0.08, 0.3, ex))
+    if (R.key) R.key.intensity = KEY_I * wallK
     if (R.rim) R.rim.intensity = 7 * L
-    if (R.hemi) R.hemi.intensity = (0.03 + 0.14 * L) * (0.6 + 0.4 * rig.wall)
+    if (R.bounce) R.bounce.intensity = BOUNCE_I * L
+    if (R.hemi) R.hemi.intensity = (0.04 + 0.12 * L) * (0.6 + 0.4 * rig.wall)
     mats.lens.color.setRGB(14 * L + 0.02, 13.2 * L + 0.02, 12.4 * L + 0.02)
     mats.lensRim.color.setRGB(24 * L + 0.02, 22.5 * L + 0.02, 20.5 * L + 0.02)
     mats.refl.color.setScalar(0.06 + 1.5 * L)
-    const cu = mats.cone.uniforms
-    cu.uIntensity.value = (w / h < 0.8 ? 0.17 : 0.26) * L
-    cu.uTime.value = reduced ? 0 : t
-    cu.uInside.value = smooth(0.15, 0.45, ex)
+    const beams = [mats.motes, ...mats.puffs]
+    for (const m of beams) {
+      const u = m.uniforms
+      u.uLampPos.value.copy(tmp.lampPos)
+      u.uLampX.value.copy(tmp.lx)
+      u.uLampY.value.copy(tmp.ly)
+      u.uLampAxis.value.copy(tmp.axis)
+    }
     const mu = mats.motes.uniforms
     mu.uTime.value = reduced ? 3 : t
     mu.uLight.value = L
-    mu.uPx.value = h * state.viewport.dpr * 0.5
-    const proj = (h * state.viewport.dpr * 0.5) / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
+    mu.uPx.value = h * dpr * 0.5 / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
+    // chalk cloud: lit like chalk (albedo ≈ 0.85) by the lamp inside the beam, the wall wash and the room
     for (let k = 0; k < 2; k++) {
       const b = rig.bursts[k]
-      const du = mats.dust[k].uniforms
-      du.uT.value = reduced ? -1 : rig.time - b.t
-      du.uE.value = b.e
-      du.uZ.value = b.z
-      du.uLight.value = Math.max(L, 0.15)
-      du.uPx.value = proj
-      du.uPoolC.value.set(poolX, poolZ)
-      du.uPoolH.value.set(POOL.halfX, POOL.halfZ)
+      const pu = mats.puffs[k].uniforms
+      const age = rig.time - b.t
+      const on = !reduced && b.e > 0 && age >= 0 && age < 6
+      pu.uT.value = on ? age : -1
+      pu.uE.value = b.e
+      pu.uZ.value = b.z
+      pu.uLamp.value.copy(LAMP_COL).multiplyScalar((0.85 / Math.PI) * ((SPOT_I * L) / (SPOT_POS.y * SPOT_POS.y)))
+      pu.uKey.value.setRGB(0.93, 0.95, 1).multiplyScalar((0.85 / Math.PI) * ((KEY_I * wallK) / 125) * 0.7)
+      pu.uAmb.value.setRGB(0.012, 0.013, 0.016).multiplyScalar(0.4 + 0.6 * L)
+      if (R[`puff${k}`]) R[`puff${k}`].visible = on
     }
 
     /* ---------- camera ---------- */
     // crane follow: only while a person lifts the bar (and while it falls back from that lift), as a pure
     // function of its height: 0 during the entrance, exactly 0 again by the time the plates hit the floor
     const want = !reduced && rig.lifted && rig.mode !== 'hold' ? followFor(Math.min(rig.y, LIFT_MAX + 0.15), f) : 0
-    tmp.follow += (want - tmp.follow) * (1 - Math.exp(-delta * 40))
+    tmp.follow += (want - tmp.follow) * (1 - Math.exp(-tmp.dt * 40))
     if (Math.abs(tmp.follow) < 1e-5) tmp.follow = 0
     const ps = tmp.pose
     ps.dolly = rig.dolly
     ps.follow = tmp.follow
-    ps.px = rig.px
-    ps.py = rig.py
+    ps.px = rig.lx
+    ps.py = rig.ly
     ps.lean = reduced ? 0 : 1
     const P = tmp.pos
     const Look = tmp.look
     let fov = poseCamera(f, ps, P, Look)
-    const breathe = reduced ? 0 : 1
-    P.x += Math.sin(t * 0.37) * 0.018 * breathe
-    P.y += Math.sin(t * 0.51) * 0.012 * breathe
-    Look.y += Math.sin(t * 0.29) * 0.006 * breathe
+    if (!reduced) {
+      // handheld: a slow drift of a few millimetres from incommensurate low-frequency sines (all < 0.12 Hz)
+      P.x += (Math.sin(t * 0.31 + 0.4) * 0.6 + Math.sin(t * 0.53 + 2.1) * 0.4) * 0.004
+      P.y += (Math.sin(t * 0.41 + 1.3) * 0.6 + Math.sin(t * 0.67 + 0.2) * 0.4) * 0.003
+      Look.x += Math.sin(t * 0.23 + 0.9) * 0.003
+      Look.y += Math.sin(t * 0.29) * 0.0025
+    }
     // scroll exit: drop under the bar and tilt up to the lamp as it passes overhead
     if (ex > 0) {
       tmp.exitPos.set(f.pos.x * 0.15, 0.3, 0.6)
@@ -647,21 +679,45 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
       P.lerp(tmp.exitPos, smooth(0.0, 0.5, ex))
       Look.lerp(tmp.exitLook, smooth(0.03, 0.55, ex))
     }
-    // impact shake: trauma² noise (translation + roll)
-    const s = rig.shake * rig.shake
-    if (s > 0.0001) {
-      P.x += (Math.sin(t * 61.0) * 0.6 + Math.sin(t * 37.3) * 0.4) * 0.028 * s
-      P.y += (Math.sin(t * 53.0 + 1.7) * 0.6 + Math.sin(t * 29.1) * 0.4) * 0.034 * s
+    // the slam shakes the tripod: the camera mount is a damped spring in the sim, driven by the floor's force
+    if (!reduced) {
+      P.x += rig.cam[0]
+      P.y += rig.cam[1]
     }
     camera.position.copy(P)
     camera.lookAt(Look)
-    if (s > 0.0001) camera.rotateZ((Math.sin(t * 47.0) * 0.6 + Math.sin(t * 23.0) * 0.4) * 0.012 * s)
-    // lens punch on a hard slam, then the exit widens the lens as the camera looks up
-    fov += -rig.punch * 1.4 + 10 * smooth(0, 0.5, ex)
+    if (!reduced) camera.rotateZ(rig.cam[2] + Math.sin(t * 0.19 + 0.6) * 0.0005)
+    fov += 10 * smooth(0, 0.5, ex)
     if (camera.fov !== fov) camera.fov = fov
     const vo = 1 - smooth(0.0, 0.4, ex)
     camera.setViewOffset(w, h, f.offX * vo, f.offY * vo, w, h)
     camera.updateProjectionMatrix()
+    camera.updateMatrixWorld()
+
+    /* ---------- lens: haze + depth of field ---------- */
+    if (lens) {
+      const U = lens.uniforms
+      U.get('uCam').value.copy(camera.position)
+      U.get('uInvProj').value.copy(camera.projectionMatrixInverse)
+      U.get('uCamWorld').value.copy(camera.matrixWorld)
+      U.get('uLampPos').value.copy(tmp.lampPos)
+      U.get('uLampX').value.copy(tmp.lx)
+      U.get('uLampY').value.copy(tmp.ly)
+      U.get('uLampAxis').value.copy(tmp.axis)
+      U.get('uLampTan').value = Math.tan(SPOT_ANGLE)
+      U.get('uLampCol').value.set(LAMP_COL.r, LAMP_COL.g, LAMP_COL.b).multiplyScalar((SPOT_I * L * HAZE_SCATTER) / (4 * Math.PI))
+      if (R.bounce) U.get('uBouncePos').value.copy(R.bounce.position)
+      U.get('uBounceCol').value.set(BOUNCE_COL.r, BOUNCE_COL.g, BOUNCE_COL.b).multiplyScalar(0.0042 * L)
+      U.get('uAmb').value.set(HAZE_AMB.r, HAZE_AMB.g, HAZE_AMB.b).multiplyScalar(0.35 + 0.65 * Math.max(L, wallK))
+      U.get('uSigma').value = HAZE_SIGMA
+      U.get('uTime').value = reduced ? 5 : t
+      U.get('uFrame').value = reduced ? 0 : (U.get('uFrame').value + 1) % 64
+      // focus on the bar (rack focus follows it overhead on the exit)
+      U.get('uFocus').value = camera.position.distanceTo(tmp.bar)
+      const px = h * dpr
+      U.get('uCocK').value = 10.5 * (px / 900)
+      U.get('uCocMax').value = 6 * (px / 900)
+    }
 
     /* ---------- flare on the lamp ---------- */
     if (R.flare) {
@@ -675,13 +731,12 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
     const el = rig.grabEl
     if (el) {
       const on = ex < 0.03 && rig.mode !== 'hold'
-      const gz = fr.grab
+      const gz = F.current.grab
       if (on !== gz.on) {
         gz.on = on
         el.style.visibility = on ? 'visible' : 'hidden'
       }
       if (on) {
-        camera.updateMatrixWorld()
         const pa = tmp.a.set(-0.96, barY, barZ).project(camera)
         const pb = tmp.b.set(0.96, barY, barZ).project(camera)
         const ax = ((pa.x + 1) / 2) * w
@@ -730,17 +785,88 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
         }
       }
     }
+  }
 
-    // ChromaticAberration follows the shake only (never splits the motion ghosts)
-    if (R.ca) {
-      const o = 0.00008 + s * 0.0035
-      R.ca.offset.set(o, o * 0.4)
-    }
-
+  useFrame((state, delta) => {
+    gl.info.reset()
+    tmp.dt = Math.min(delta, 1 / 20)
+    drive(state.clock.elapsedTime, size.width, size.height, state.viewport.dpr)
     tmp.frames += 1
-    if (tmp.frames === 1) onFrame?.()
-    if (tmp.frames === 2) onLive?.()
   })
+
+  /* ---------- warm-up: compile every program, upload every texture, render once, then go ---------- */
+  useEffect(() => {
+    let dead = false
+    let id = 0
+    gl.info.autoReset = false
+    const start = performance.now()
+    const run = async () => {
+      const comp = composerRef.current
+      const ready = comp && comp.passes.some((p) => p instanceof EffectPass)
+      if (!ready && performance.now() - start < 4000) {
+        id = setTimeout(run, 20)
+        return
+      }
+      // pose the scene as the first frame will see it (dark, bar above the frame)
+      drive(0, size.width, size.height, gl.getPixelRatio())
+      // compile against the composer's input target, so the variants match what will render
+      const prev = gl.getRenderTarget()
+      if (comp) gl.setRenderTarget(comp.inputBuffer)
+      try {
+        await gl.compileAsync(scene, camera)
+      } catch {
+        /* compile errors surface on the warm render */
+      }
+      gl.setRenderTarget(prev)
+      if (dead) return
+      for (const tex of A.textures) gl.initTexture(tex)
+      // a dark warm frame: shadow maps, post passes and any lazily built state, before anything moves
+      if (comp) comp.render(0)
+      else gl.render(scene, camera)
+      if (dead) return
+      if (import.meta.env.DEV) rig.warmMs = Math.round(performance.now() - start)
+      onWarm?.()
+    }
+    run()
+    return () => {
+      dead = true
+      clearTimeout(id)
+    }
+    // the assets are fixed per mount; size changes re-pose on the next frame
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [A])
+
+  // dev-only probes for the virtual-clock captures
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    window.__dropProbe = () => ({
+      camX: +camera.position.x.toFixed(5),
+      camY: +camera.position.y.toFixed(5),
+      camZ: +camera.position.z.toFixed(5),
+      fov: +camera.fov.toFixed(4),
+      barY: R.barPos ? +R.barPos.position.y.toFixed(5) : null,
+      barZ: R.barPos ? +R.barPos.position.z.toFixed(5) : null,
+      spot: R.spot ? +R.spot.intensity.toFixed(3) : null,
+      key: R.key ? +R.key.intensity.toFixed(3) : null,
+      exit: +rig.exit.toFixed(5),
+      bend: +rig.bend.toFixed(5),
+    })
+    window.__dropInfo = () => ({
+      calls: gl.info.render.calls,
+      triangles: gl.info.render.triangles,
+      points: gl.info.render.points,
+      programs: gl.info.programs?.length,
+      geometries: gl.info.memory.geometries,
+      textures: gl.info.memory.textures,
+      passes: composerRef.current ? composerRef.current.passes.map((p) => p.name) : null,
+      dpr: gl.getPixelRatio(),
+      size: [size.width, size.height],
+    })
+    return () => {
+      delete window.__dropProbe
+      delete window.__dropInfo
+    }
+  }, [gl, camera, rig, R, size, composerRef])
 
   const P = geo.platform
   const plateNodes = []
@@ -786,7 +912,7 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
   return (
     <>
       {/* ---------------- lights ---------------- */}
-      <hemisphereLight ref={set('hemi')} args={['#3a3d4c', '#060607', 0.05]} />
+      <hemisphereLight ref={set('hemi')} args={['#3a3d4c', '#0a0908', 0.05]} />
       <spotLight
         ref={set('spot')}
         position={SPOT_POS.toArray()}
@@ -809,14 +935,14 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
       </spotLight>
       <spotLight
         ref={set('key')}
-        angle={0.2}
+        angle={0.24}
         penumbra={1}
         decay={2}
         distance={0}
         color="#eff1f6"
         intensity={0}
-        castShadow={!lite && !degraded}
-        shadow-mapSize={[2048, 2048]}
+        castShadow={!lite}
+        shadow-mapSize={[1024, 1024]}
         shadow-bias={-0.0002}
         shadow-normalBias={0.02}
         shadow-radius={4}
@@ -829,11 +955,28 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
       <spotLight ref={set('rim')} angle={0.7} penumbra={0.8} decay={2} distance={0} color="#cdd6ff" intensity={0}>
         <object3D attach="target" />
       </spotLight>
+      <pointLight ref={set('bounce')} color="#ffd2a6" decay={2} distance={0} intensity={0} position={[0, 0.32, -0.26]} />
 
       {/* ---------------- room ---------------- */}
-      <mesh geometry={geo.floor} material={mats.floor} position-y={-0.045} receiveShadow />
+      <mesh geometry={geo.floor} material={mats.floor} position-y={FLOOR_Y} receiveShadow />
       <mesh ref={set('wall')} geometry={geo.wall} material={mats.wall} receiveShadow />
-      <mesh ref={set('paint')} geometry={geo.paint} material={mats.paint} receiveShadow renderOrder={1} />
+      <group ref={set('room')}>
+        <mesh geometry={geo.cove} material={mats.cove} />
+        <mesh geometry={geo.ceiling.deck} material={mats.ceiling} />
+        <mesh geometry={geo.ceiling.joists} material={mats.joist} />
+        {geo.props.map((p, i) => (
+          <group
+            key={p.name}
+            ref={(el) => {
+              propRefs.current[i] = el
+            }}
+          >
+            {p.parts.map((q, j) => (
+              <mesh key={j} geometry={q.geo} material={mats[q.mat]} />
+            ))}
+          </group>
+        ))}
+      </group>
 
       {/* platform: steel frame, oak centre, rubber sides (plates land on the rubber) */}
       <group>
@@ -855,7 +998,7 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
         ))}
       </group>
 
-      {/* ---------------- lamp + cone ---------------- */}
+      {/* ---------------- lamp ---------------- */}
       <group ref={set('lamp')} position={SPOT_POS.toArray()} quaternion={baseConeQ}>
         <mesh geometry={geo.lamp.shade} material={mats.shade} />
         <mesh geometry={geo.lamp.refl} material={mats.refl} />
@@ -865,12 +1008,9 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
         <mesh geometry={geo.lamp.cable} material={mats.cable} />
         <mesh ref={set('flare')} geometry={geo.flare} material={mats.flare} position-y={0.06} renderOrder={10} visible={false} />
       </group>
-      <mesh ref={set('cone')} geometry={geo.cone.g} material={mats.cone} position={SPOT_POS.toArray()} quaternion={baseConeQ} renderOrder={5} />
       <points geometry={geo.motes} material={mats.motes} renderOrder={6} frustumCulled={false} />
-      <points geometry={geo.dust[0]} material={mats.dust[0]} renderOrder={7} frustumCulled={false} />
-      <points geometry={geo.dust[1]} material={mats.dust[1]} renderOrder={7} frustumCulled={false} />
 
-      {/* ---------------- motion ghosts (world space, written per frame) ---------------- */}
+      {/* ---------------- shutter trails (world space, written per frame) ---------------- */}
       {geo.plates.map((pg, k) => (
         <instancedMesh
           key={pg.spec.kg}
@@ -898,42 +1038,82 @@ function World({ rig, lite, reduced, degraded, onFrame, onLive }) {
         </group>
       </group>
 
-      <Post lite={lite || degraded} reduced={reduced} caRef={set('ca')} />
+      {/* ---------------- chalk clouds (after the opaque world, before the lens) ---------------- */}
+      <mesh ref={set('puff0')} geometry={geo.puffs[0]} material={mats.puffs[0]} renderOrder={7} frustumCulled={false} visible={false} />
+      <mesh ref={set('puff1')} geometry={geo.puffs[1]} material={mats.puffs[1]} renderOrder={7} frustumCulled={false} visible={false} />
     </>
   )
 }
 
 /* ------------------------------------------------------------------ */
-function Post({ lite, reduced, caRef }) {
-  const offset = useMemo(() => new THREE.Vector2(0.00008, 0.00003), [])
+function Post({ lite, reduced, composerRef, lens }) {
   return (
-    <EffectComposer multisampling={lite ? 0 : 4}>
+    <EffectComposer ref={composerRef} multisampling={lite ? 0 : 4}>
+      <primitive object={lens} />
       <Bloom mipmapBlur luminanceThreshold={1.1} luminanceSmoothing={0.3} intensity={0.4} radius={0.62} />
-      <ChromaticAberration ref={caRef} offset={offset} radialModulation modulationOffset={0.25} />
       <ToneMapping mode={ToneMappingMode.NEUTRAL} />
-      <Vignette offset={0.2} darkness={0.7} />
-      {!reduced && <Noise premultiply blendFunction={BlendFunction.SCREEN} opacity={0.32} />}
+      <Vignette offset={0.28} darkness={0.5} />
+      {!reduced && <Noise premultiply blendFunction={BlendFunction.SCREEN} opacity={0.26} />}
     </EffectComposer>
   )
 }
 
-export function DropScene({ rig, active = true, reduced = false, lite = false, onFrame, onLive }) {
-  // a real GPU that can't hold 40 fps drops MSAA, the key light's shadow and resolution (once, never back)
+function Stage({ rig, lite, reduced, onWarm }) {
+  const composerRef = useRef(null)
+  return (
+    <LensHost lite={lite}>
+      {(lens) => (
+        <>
+          <World rig={rig} lite={lite} reduced={reduced} onWarm={onWarm} composerRef={composerRef} lens={lens} />
+          <Post lite={lite} reduced={reduced} composerRef={composerRef} lens={lens} />
+        </>
+      )}
+    </LensHost>
+  )
+}
+
+/** Owns the lens effect (its own small cookie + noise textures; fixed per quality level). */
+function LensHost({ lite, children }) {
+  const lens = useMemo(() => {
+    const cookie = spotCookie({ angle: SPOT_ANGLE, height: SPOT_POS.distanceTo(SPOT_AIM), ...POOL, size: 128 })
+    const noise = noiseTexture({ size: 128 })
+    const fx = new DropLensEffect({ cookie, noise, haze: lite ? 4 : 6, dof: lite ? 8 : 12 })
+    fx.userData = { cookie, noise }
+    return fx
+  }, [lite])
+  useEffect(
+    () => () => {
+      lens.userData.cookie.dispose()
+      lens.userData.noise.dispose()
+      lens.dispose()
+    },
+    [lens],
+  )
+  return children(lens)
+}
+
+export function DropScene({ rig, active = true, reduced = false, lite = false, onLive }) {
+  // a real GPU that can't hold 40 fps drops resolution (once, never back). Nothing else changes, so no program
+  // or pass has to be rebuilt mid-session.
   const [degraded, setDegraded] = useState(false)
   const onDecline = useCallback(() => setDegraded(true), [])
+  const [warm, setWarm] = useState(false)
+  const onWarm = useCallback(() => {
+    setWarm(true)
+    onLive?.()
+  }, [onLive])
   const dpr = degraded ? [1, 1.25] : [1, 1.5]
   return (
     <Canvas
       dpr={dpr}
-      frameloop={active ? 'always' : 'never'}
+      frameloop={active && warm ? 'always' : 'never'}
       shadows={SHADOWS}
       gl={{ antialias: false, alpha: false, stencil: false, powerPreference: 'high-performance' }}
       camera={{ position: [1.2, 0.6, 3.6], fov: 30, near: 0.05, far: 60 }}
     >
       <color attach="background" args={[BG]} />
-      <fogExp2 attach="fog" args={[BG, 0.07]} />
-      {!lite && !degraded && <PerformanceMonitor onDecline={onDecline} />}
-      <World rig={rig} lite={lite} reduced={reduced} degraded={degraded} onFrame={onFrame} onLive={onLive} />
+      {!lite && !degraded && warm && <PerformanceMonitor onDecline={onDecline} />}
+      <Stage rig={rig} lite={lite} reduced={reduced} onWarm={onWarm} />
     </Canvas>
   )
 }
