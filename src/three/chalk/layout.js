@@ -57,5 +57,8 @@ export const LAYOUTS = {
 /** Portrait boxes (phones, tablets held upright) stack the headline in three lines. */
 export const variantFor = (w, h) => (w > 0 && h > 0 && w / h < 0.8 ? 'stack' : 'wide')
 
-/* the chalk block of the opening slam, half extents and edge radius in cap heights */
-export const BLOCK = { hx: 0.92, hy: 0.46, hz: 0.58, r: 0.12 }
+/*
+ * the chalk block of the opening slam, half extents and edge radius in cap heights (1 cap = 0.2 m): a 21 x 11 x 14 cm
+ * brick of pressed gym chalk. Its edges are worn and chipped in the shaders (see chipDepth in sim.js).
+ */
+export const BLOCK = { hx: 0.53, hy: 0.27, hz: 0.35, r: 0.06 }

@@ -10,18 +10,25 @@ vec3 hfBlackbody(float t) {
   vec3 c1 = vec3(0.10, 0.004, 0.0);
   vec3 c2 = vec3(0.40, 0.02, 0.004);
   vec3 c3 = vec3(0.95, 0.07, 0.012);
-  vec3 c4 = vec3(1.0, 0.20, 0.03);
-  vec3 c5 = vec3(1.0, 0.50, 0.10);
-  vec3 c6 = vec3(1.0, 0.86, 0.62);
-  vec3 c = mix(c0, c1, clamp(t / 0.06, 0.0, 1.0));
-  c = mix(c, c2, clamp((t - 0.06) / 0.09, 0.0, 1.0));
+  vec3 c4 = vec3(1.0, 0.24, 0.03);
+  vec3 c5 = vec3(1.0, 0.6, 0.07);
+  vec3 c6 = vec3(1.0, 0.92, 0.72);
+  // no visible glow below ~430 C (black heat)
+  vec3 c = mix(c0, c1, clamp((t - 0.04) / 0.04, 0.0, 1.0));
+  c = mix(c, c2, clamp((t - 0.08) / 0.07, 0.0, 1.0));
   c = mix(c, c3, clamp((t - 0.15) / 0.20, 0.0, 1.0));
   c = mix(c, c4, clamp((t - 0.35) / 0.20, 0.0, 1.0));
   c = mix(c, c5, clamp((t - 0.55) / 0.20, 0.0, 1.0));
   c = mix(c, c6, clamp((t - 0.75) / 0.25, 0.0, 1.0));
   return c;
 }
-float hfHeatGain(float t) { return 0.25 + 3.3 * pow(max(t, 0.0), 2.3); }
+// emission gain: the reds and orange stay below ~1.3 in their brightest channel (so the tone curve keeps them
+// saturated instead of washing them to peach); only yellow and white heat go well over 1
+float hfHeatGain(float t) {
+  float a = smoothstep(0.08, 0.55, t);
+  float b = smoothstep(0.55, 1.0, t);
+  return 0.3 + 0.95 * a + 1.75 * b * sqrt(b);
+}
 `
 
 export const NOISE = /* glsl */ `
@@ -65,6 +72,9 @@ float hfCell(vec2 x) {
 /* ------------------------------------------------------------------ */
 /* Steel: MeshPhysicalMaterial + temperature field (onBeforeCompile)   */
 /* ------------------------------------------------------------------ */
+export const DENTS = 8
+export const SDF_MAX = 0.2 // world units of inside distance mapped to 1.0 in a glyph's distance texture
+
 export const STEEL_VERT_PARS = /* glsl */ `
 varying vec3 vHfObj;
 varying vec3 vHfN;
@@ -75,23 +85,32 @@ vHfObj = position;
 vHfN = normal;
 vHfWy = (modelMatrix * vec4(transformed, 1.0)).y;
 `
-// last line of the fragment: in the floor's reflection pass, alpha carries the height above the floor
+// last line of the fragment. Main pass: alpha is 1 + how much of the pixel is incandescent glow, so the bloom can
+// pick out hot steel at a far lower level than a cold highlight. Floor reflection pass: alpha is the height above
+// the floor (the floor blurs its reflection by it)
 export const STEEL_FRAG_OUT = /* glsl */ `
-if (uMirror > 0.5) gl_FragColor.a = clamp((vHfWy - uFloorY) * 0.25, 0.0, 1.0);
+// never emit NaN/Inf: the bloom's mip chain would smear one bad pixel over the whole frame
+if (any(isnan(gl_FragColor.rgb)) || any(isinf(gl_FragColor.rgb))) gl_FragColor.rgb = vec3(0.0);
+gl_FragColor.a = uMirror > 0.5 ? clamp((vHfWy - uFloorY) * 0.25, 0.0, 1.0) : 1.0 + clamp(hfGlowA * 2.4, 0.0, 1.0);
 `
 
 export const STEEL_FRAG_PARS = /* glsl */ `
-uniform float uTemp;
-uniform float uTemper;
-uniform float uRim;
+uniform float uTemp;   // heat of the stock (0 cold .. 1 white)
+uniform float uScale;  // mill scale coverage (1 while it glows, flakes off as it cools)
+uniform float uTint;   // straw temper film along the arrises, left as the scale goes
+uniform float uRim;    // exit: hot glint along the arrises
+uniform float uHalfD;  // half the straight depth of the walls
 uniform vec2 uRest;
 uniform float uSeed;
 uniform float uBump;
-uniform vec4 uSplats[${SPLATS}];
-uniform vec4 uSplatT[${SPLATS / 4}];
+uniform vec4 uSplats[${SPLATS}]; // segment start xy, radius, heat
+uniform vec4 uSplatB[${SPLATS}]; // segment end xy, temper film, radius it formed at
 uniform float uSplatOn;
-uniform vec3 uTorch;
+uniform vec4 uDents[${DENTS}]; // xy, radius, depth (rest coordinates)
+uniform float uDentOn;
 uniform vec4 uGlint;
+uniform vec3 uForgeDir; // world direction toward the forge mouth
+uniform vec3 uForgeEnv; // the forge's flicker on top of its average in the environment
 uniform sampler2D uSdf;
 uniform vec4 uSdfXf;
 uniform float uMirror;
@@ -102,108 +121,141 @@ varying float vHfWy;
 ${BLACKBODY}
 ${NOISE}
 vec3 hfPerturb(vec3 surfPos, vec3 surfNorm, vec2 dHdxy, float faceDir) {
-  vec3 sx = normalize(dFdx(surfPos));
-  vec3 sy = normalize(dFdy(surfPos));
+  vec3 ddx = dFdx(surfPos);
+  vec3 ddy = dFdy(surfPos);
+  if (dot(ddx, ddx) < 1e-16 || dot(ddy, ddy) < 1e-16) return surfNorm;
+  vec3 sx = normalize(ddx);
+  vec3 sy = normalize(ddy);
   vec3 r1 = cross(sy, surfNorm);
   vec3 r2 = cross(surfNorm, sx);
   float det = dot(sx, r1) * faceDir;
   vec3 grad = sign(det) * (dHdxy.x * r1 + dHdxy.y * r2);
-  return normalize(abs(det) * surfNorm - grad);
-}
-// thin-film temper colours on the reflectance: straw, bronze, a dark neutral, then steel blue (never purple)
-vec3 hfTemperTint(float t) {
-  vec3 c = vec3(1.0);
-  c = mix(c, vec3(1.0, 0.88, 0.63), smoothstep(0.04, 0.22, t));
-  c = mix(c, vec3(0.8, 0.58, 0.36), smoothstep(0.22, 0.42, t));
-  c = mix(c, vec3(0.44, 0.42, 0.43), smoothstep(0.42, 0.58, t));
-  c = mix(c, vec3(0.34, 0.41, 0.6), smoothstep(0.58, 0.8, t));
-  return c;
+  vec3 r = abs(det) * surfNorm - grad;
+  return dot(r, r) > 1e-14 ? normalize(r) : surfNorm;
 }
 `
 
-// after <color_fragment>: temperature per fragment; hot steel turns to dark oxide before it glows
+// after <color_fragment>: temperature per fragment, mill scale, temper film
 export const STEEL_FRAG_TEMP = /* glsl */ `
 vec2 hfRest = vHfObj.xy + uRest;
-float hfN1 = hfFbm(vHfObj * 2.3 + uSeed);
-float hfT = uTemp;
-float hfTp = 0.0;
+// fine isotropic variation (a few cm): scale is never perfectly even
+float hfN1 = hfFbm(vHfObj * 11.0 + uSeed);
+float hfTs = 0.0;
+float hfQr = 1e3; // nearest temper film, in units of the radius it formed at
+float hfTw = 0.0; // and its strength
 for (int i = 0; i < ${SPLATS}; i++) {
   if (uSplatOn < 0.5) break;
   vec4 s = uSplats[i];
-  vec4 tv = uSplatT[i / 4];
-  int c = i - (i / 4) * 4;
-  float tw = c == 0 ? tv.x : (c == 1 ? tv.y : (c == 2 ? tv.z : tv.w));
-  if (s.w > 0.002 || tw > 0.004) {
-    vec2 d = hfRest - s.xy;
-    if (i == 0) {
-      // the torch: stretched along its travel
-      float a = dot(d, uTorch.xy);
-      d -= uTorch.xy * a * (uTorch.z / (1.0 + uTorch.z));
-    }
+  vec4 b = uSplatB[i];
+  if (s.w > 0.002 || b.z > 0.004) {
+    // a capsule: the stretch of steel the torch swept this step (a point for a blow)
+    vec2 pa = hfRest - s.xy;
+    vec2 ba = b.xy - s.xy;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
+    vec2 d = pa - ba * h;
     float q = dot(d, d) / (s.z * s.z);
-    // a hot disc with a ragged edge (the noise eats into it) and short tails, so a blow stays where it landed;
-    // the temper film spreads a little wider in a ring around it
-    hfT += s.w * exp(-q * (0.7 + 0.5 * hfN1) - 0.25 * q * q);
-    hfTp += tw * exp(-q * 0.5 - 0.08 * q * q);
+    // a hot core with a short falloff, its edge a little ragged. Capsules join as a union (max), not a sum:
+    // consecutive ones share an end, and adding them would bead the track at every joint
+    hfTs = max(hfTs, s.w * exp(-q * (1.45 + 0.35 * hfN1)));
+    // the temper film formed at the first heat, so it keeps the original radius while the heat spreads; like
+    // the heat it is one field over the whole track (nearest capsule), so it bands the track instead of
+    // ringing every capsule
+    if (b.z > 0.004) {
+      float qr = dot(d, d) / (b.w * b.w);
+      hfQr = min(hfQr, qr);
+      hfTw = max(hfTw, b.z * step(qr, 6.0));
+    }
   }
 }
-// thin edges, arrises and walls lose heat first and the core holds it (inside-distance field): as the steel
-// cools the glow shrinks into the thick of each stroke, and even at white heat the edges run a shade cooler,
-// so the letterform stays defined
-float hfD = texture2D(uSdf, vHfObj.xy * uSdfXf.xy + uSdfXf.zw).r;
-float hfFace = smoothstep(0.7, 0.97, abs(vHfN.z));
-float hfCore = hfD * hfFace;
-float hfC = smoothstep(0.0, 0.8, hfCore);
-// exit flare: the bevels and walls run hot in uneven patches, the faces stay steel
-float hfRimT = uRim * (1.0 - smoothstep(0.0, 0.22, hfCore)) * (0.35 + 0.9 * hfN1 * hfN1);
-float hfTn = hfT * (0.88 + 0.24 * hfN1);
-float hfTe = hfTn * mix(0.84, 1.0, hfC) * pow(clamp(hfTn, 0.001, 1.0), 0.75 * (1.0 - hfC)) * (1.0 - 0.06 * vHfObj.y);
-hfTe = clamp(hfTe + hfRimT, 0.0, 1.25);
-// the oxide covers the whole hot bar, cool edges included: they go dark, never silver-pink
-float hfHot = smoothstep(0.012, 0.06, max(hfTn, hfTe));
-float hfTau = clamp(uTemper * (0.7 + 0.6 * hfN1) * mix(1.12, 0.9, hfCore) + hfTp, 0.0, 1.0);
-// mill scale: dark, warm and a little glossy, so the chamfers still draw the letter while it glows
-diffuseColor.rgb = mix(diffuseColor.rgb * hfTemperTint(hfTau), vec3(0.085, 0.066, 0.05), hfHot);
+// thin bands where the steel only reached 250-300 C (bronze) and 200 C (straw)
+float hfRb = (hfQr - 2.1) / 0.5;
+float hfRs = (hfQr - 3.3) / 0.6;
+vec2 hfTr = hfTw * vec2(exp(-hfRb * hfRb), exp(-hfRs * hfRs));
+// distance from the nearest arris: in from the outline on the faces, along the depth on the walls
+float hfD = texture2D(uSdf, vHfObj.xy * uSdfXf.xy + uSdfXf.zw).r * ${SDF_MAX.toFixed(3)};
+float hfFace = smoothstep(0.55, 0.9, abs(vHfN.z));
+float hfA = mix(uHalfD + 0.02 - abs(vHfObj.z), hfD - 0.02, hfFace);
+// arrises run a little cooler in a narrow band; as the stock cools the band widens a touch, so the last of the
+// glow sits in the thick of each stroke
+float hfW = mix(0.035, 0.075, smoothstep(0.5, 0.12, uTemp));
+float hfC = smoothstep(-0.01, hfW, hfA);
+float hfTn = (uTemp + hfTs) * (0.96 + 0.08 * hfN1);
+float hfTe = hfTn * mix(0.88, 1.0, hfC);
+// exit: a thin hot glint along the arrises as a letter flies past the lens
+hfTe = clamp(hfTe + uRim * (1.0 - smoothstep(-0.01, 0.012, hfA)) * (0.3 + 0.9 * hfN1 * hfN1), 0.0, 1.25);
+// mill scale: a dark neutral oxide skin on hot steel; below dull red it flakes off in small patches and the
+// satin steel shows through
+float hfFl = hfFbm(vHfObj * 15.0 + uSeed * 1.7) + 0.08 * hfNoise(vHfObj * 70.0);
+float hfCov = max(uScale, smoothstep(0.05, 0.22, hfTs));
+// (the last patches are already thin: they fade as they go, so the clearing never reads as a hard speckle)
+float hfSc = smoothstep(-0.035, 0.035, hfCov * 1.3 - 0.15 - hfFl) * (0.4 + 0.6 * smoothstep(0.0, 0.7, hfCov));
+// temper: straw only (never through blue or purple), along the arrises and in rings round a blow
+float hfStr = clamp(uTint * (1.0 - smoothstep(0.0, 0.05, hfA)) + hfTr.y, 0.0, 1.0);
+vec3 hfTint = mix(vec3(1.0), vec3(1.0, 0.8, 0.52), hfStr) * mix(vec3(1.0), vec3(0.84, 0.58, 0.38), clamp(hfTr.x, 0.0, 1.0));
+// (a warm graphite, faintly glossy: a dim sheen keeps the letterform readable while it is dark, and with the
+// last dull-red glow it reads as dark brown-red, never mauve)
+diffuseColor.rgb = mix(diffuseColor.rgb * hfTint, vec3(0.08, 0.07, 0.062) * (0.8 + 0.4 * hfN1), hfSc);
 `
 
-// after <roughnessmap_fragment>: brushed streaks along the stroke direction + forge-scale roughness when hot
+// after <roughnessmap_fragment>: brushed streaks on bare steel; scale is rougher (and only where it is)
 export const STEEL_FRAG_ROUGH = /* glsl */ `
 float hfBrush = hfNoise(vec3(vHfObj.x * 1.2, vHfObj.y * 46.0, vHfObj.z * 46.0));
-roughnessFactor = clamp(roughnessFactor + (hfBrush - 0.5) * 0.09 + (hfN1 - 0.5) * 0.07 + hfHot * 0.28, 0.08, 1.0);
+roughnessFactor = clamp(roughnessFactor + ((hfBrush - 0.5) * 0.09 + (hfN1 - 0.5) * 0.05) * (1.0 - hfSc) + hfSc * 0.16, 0.08, 1.0);
 `
 
-// after <normal_fragment_maps>: shallow hammer dimples
-// after <lights_physical_fragment>: the brushing is on the faces; walls and chamfers stay isotropic
+// after <lights_physical_fragment>: the brushing is on the faces; walls, chamfers and scale stay isotropic
 export const STEEL_FRAG_ANISO = /* glsl */ `
 #ifdef USE_ANISOTROPY
-material.anisotropy *= hfFace * (1.0 - hfHot);
+material.anisotropy *= hfFace * (1.0 - hfSc);
 material.alphaT = mix(pow2(material.roughness), 1.0, pow2(material.anisotropy));
 #endif
 `
 
-export const STEEL_FRAG_NORMAL = /* glsl */ `
-#ifdef HF_HAMMER
+// after <lights_fragment_end>: the forge's flicker in the reflections (the environment holds its average)
+export const STEEL_FRAG_FORGE = /* glsl */ `
 {
-  vec2 hfUv = abs(vHfN.z) > 0.6 ? vHfObj.xy : vec2(vHfObj.x + vHfObj.y, vHfObj.z * 1.3);
-  float hfC = hfCell(hfUv * 6.5 + uSeed);
-  float hfH = hfC * hfC * uBump;
-  normal = hfPerturb(-vViewPosition, normal, vec2(dFdx(hfH), dFdy(hfH)), faceDirection);
+  vec3 hfRw = inverseTransformDirection(reflect(-normalize(vViewPosition), normal), viewMatrix);
+  float hfF = smoothstep(0.76, 0.97, dot(hfRw, uForgeDir));
+  reflectedLight.indirectSpecular = max(reflectedLight.indirectSpecular + uForgeEnv * hfF * material.specularColor, 0.0);
 }
-#endif
 `
 
-// after <emissivemap_fragment>: blackbody glow (fine scale flakes only in the dull-red to cherry range),
-// and the glint: a strip light travelling through the reflections, so it races along the bevels
+// after <normal_fragment_maps>: shallow hammer dimples, and the dents left by blows (front faces)
+export const STEEL_FRAG_NORMAL = /* glsl */ `
+{
+  float hfH = 0.0;
+#ifdef HF_HAMMER
+  vec2 hfUv = abs(vHfN.z) > 0.6 ? vHfObj.xy : vec2(vHfObj.x + vHfObj.y, vHfObj.z * 1.3);
+  float hfCl = hfCell(hfUv * 6.5 + uSeed);
+  hfH += hfCl * hfCl * uBump;
+#endif
+  if (uDentOn > 0.5 && vHfN.z > 0.6) {
+    for (int i = 0; i < ${DENTS}; i++) {
+      vec4 dn = uDents[i];
+      if (dn.w <= 0.0) continue;
+      vec2 dd = hfRest - dn.xy;
+      hfH -= dn.w * exp(-dot(dd, dd) / (dn.z * dn.z));
+    }
+  }
+  normal = hfPerturb(-vViewPosition, normal, vec2(dFdx(hfH), dFdy(hfH)), faceDirection);
+}
+`
+
+// after <emissivemap_fragment>: blackbody glow (thick scale flakes hold a touch less heat at the surface in the
+// reds), and the glint: a strip light travelling through the reflections, so it races along the bevels
 export const STEEL_FRAG_EMIT = /* glsl */ `
-float hfMid = smoothstep(0.07, 0.17, hfTe) * (1.0 - smoothstep(0.3, 0.46, hfTe));
-float hfFlake = 0.0;
-if (hfMid > 0.001) hfFlake = smoothstep(0.52, 0.74, hfFbm(vec3(vHfObj.x * 13.0, vHfObj.y * 50.0, vHfObj.z * 50.0) + uSeed * 3.0));
-totalEmissiveRadiance += hfBlackbody(hfTe) * hfHeatGain(hfTe) * (1.0 - hfFlake * hfMid * 0.18);
+float hfMid = smoothstep(0.06, 0.15, hfTe) * (1.0 - smoothstep(0.35, 0.55, hfTe));
+vec3 hfE = hfBlackbody(hfTe) * hfHeatGain(hfTe) * (1.0 - 0.16 * hfMid * smoothstep(0.45, 0.7, hfFl));
+// the scale's texture shows in the glow at any heat: its flakes a touch darker, a finer mottle all over
+float hfMot = hfFbm(vHfObj * 23.0 + uSeed * 0.7);
+hfE *= (1.0 - 0.18 * smoothstep(0.5, 0.78, hfFl)) * (0.9 + 0.2 * hfMot) * step(0.004, hfTe);
+totalEmissiveRadiance += hfE;
+float hfGlowA = dot(hfE, vec3(0.2126, 0.7152, 0.0722));
 if (uGlint.z > 0.001) {
   vec3 hfRw = inverseTransformDirection(reflect(-normalize(vViewPosition), normal), viewMatrix);
   float hfS = dot(hfRw.xy, vec2(0.866, 0.5));
   float hfG = exp(-pow((hfS - uGlint.x) / uGlint.y, 2.0)) * smoothstep(-0.2, 0.25, hfRw.z);
-  totalEmissiveRadiance += diffuseColor.rgb * hfG * uGlint.z * (1.0 - hfHot) * (1.15 - roughnessFactor);
+  totalEmissiveRadiance += diffuseColor.rgb * hfG * uGlint.z * (1.0 - hfSc) * (1.15 - roughnessFactor);
 }
 `
 
@@ -221,10 +273,9 @@ uniform float uShutter;
 uniform float uAspect;
 uniform float uGain;
 uniform float uSize;
-varying vec3 vColor;
+varying vec2 vHL; // head hue, brightness
 varying vec2 vQ;
 varying float vKind;
-${BLACKBODY}
 void main() {
   float age = aInfo.x;
   float kind = aInfo.w;
@@ -232,7 +283,7 @@ void main() {
   float size = aInfo.y * uSize * (kind > 0.5 ? 1.0 : mix(1.0, 0.45, age));
   if (aInfo.y <= 0.0) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-    vColor = vec3(0.0);
+    vHL = vec2(0.0);
     vQ = vec2(0.0);
     return;
   }
@@ -253,25 +304,33 @@ void main() {
   gl_Position = p;
   vQ = position.xy;
   float heat = kind > 0.5 ? aInfo.z : aInfo.z * pow(1.0 - age, 0.9);
-  // a spark burns white-yellow and dies orange, never red or pink; embers stay a soft orange
-  float hue = kind > 0.5 ? aInfo.z : mix(0.62, 1.0, clamp(heat, 0.0, 1.0));
-  float lum = kind > 0.5 ? (0.35 + 4.0 * heat * heat) : (0.15 + 7.0 * heat * heat * heat);
+  // a spark's head burns yellow-white and dies orange; its tail is always cooler (see the fragment)
+  float hue = kind > 0.5 ? aInfo.z : mix(0.6, 0.88, clamp(heat, 0.0, 1.0));
+  float lum = kind > 0.5 ? (0.35 + 4.0 * heat * heat) : (0.25 + 6.5 * heat * heat * heat);
   float fade = kind > 0.5
     ? smoothstep(0.0, 0.12, age) * (1.0 - smoothstep(0.55, 1.0, age))
     : smoothstep(0.0, 0.05, age) * (1.0 - smoothstep(0.7, 1.0, age));
-  // a streak spreads its light along its length: keep the energy, not the brightness
-  float spread = kind > 0.5 ? 1.0 : clamp(wh * 2.0 / max(len * 0.5 + wh * 2.0, 1e-4), 0.35, 1.0);
-  vColor = hfBlackbody(hue) * lum * fade * uGain * spread;
+  // a streak spreads its light along its length: keep the energy, not the brightness (the head keeps most)
+  float spread = kind > 0.5 ? 1.0 : clamp(wh * 3.0 / max(len * 0.5 + wh * 3.0, 1e-4), 0.5, 1.0);
+  vHL = vec2(hue, lum * fade * uGain * spread);
 }
 `
 export const SPARK_FRAG = /* glsl */ `
-varying vec3 vColor;
+varying vec2 vHL;
 varying vec2 vQ;
 varying float vKind;
+${BLACKBODY}
 void main() {
   float side = 1.0 - vQ.y * vQ.y;
-  float along = vKind > 0.5 ? 1.0 : 0.25 + 0.75 * (1.0 - vQ.x);
-  float soft = vKind > 0.5 ? side * side : side;
-  gl_FragColor = vec4(vColor * soft * along, 1.0);
+  vec3 c;
+  if (vKind > 0.5) {
+    c = hfBlackbody(vHL.x) * vHL.y * side * side;
+  } else {
+    // hot head, cooler fading tail
+    float x = vQ.x;
+    float along = mix(1.0, 0.1, pow(x, 0.6));
+    c = hfBlackbody(vHL.x - 0.3 * x) * vHL.y * side * along * (1.0 + 0.8 * (1.0 - smoothstep(0.0, 0.12, x)));
+  }
+  gl_FragColor = vec4((any(isnan(c)) || any(isinf(c))) ? vec3(0.0) : c, 1.0);
 }
 `

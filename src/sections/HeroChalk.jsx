@@ -11,11 +11,22 @@ import './hero-chalk.css'
 const ChalkScene = lazy(() => import('../three/chalk/ChalkScene.jsx').then((m) => ({ default: m.ChalkScene })))
 const ChalkFallback = lazy(() => import('../three/chalk/ChalkFallback.jsx').then((m) => ({ default: m.ChalkFallback })))
 
-const SCENE_WAIT = 1200 // ms after `ready` that the page waits for the canvas before entering without it
-const LOCK_WAIT = 2600 // ms after the slam starts before the copy enters even if the letters haven't reported in
+const SCENE_WAIT = 1.2 // s after `ready` that the page waits for the canvas before entering without it
+// s after the opening starts before the copy enters even if the letters haven't reported in. With the scene live the
+// letters report in themselves (the scene keeps its opening in real time on slow devices), so this is only a guard
+// against a stalled canvas; without it the copy follows at once
+const LOCK_WAIT = 4.5
 const AIR_HOT = 1 // m/s: the air readout turns heat above this
+/*
+ * The pull-in: the step response of a critically damped spring. It leaves at zero speed, is at full speed within
+ * a tenth of the move and settles without a bump, so the copy is yanked in and snaps to rest without the instant
+ * start of an expo curve.
+ */
+const W_PULL = 8
+const PULL_NORM = 1 - (1 + W_PULL) * Math.exp(-W_PULL)
+const pullEase = (t) => (1 - (1 + W_PULL * t) * Math.exp(-W_PULL * t)) / PULL_NORM
 const PULL_FROM = { x: -110, skewX: -26, scaleX: 1.45, opacity: 0, transformOrigin: '0% 50%' }
-const PULL_TO = { x: 0, skewX: 0, scaleX: 1, opacity: 1, duration: 0.8, ease: 'expo.out', stagger: 0.03 }
+const PULL_TO = { x: 0, skewX: 0, scaleX: 1, opacity: 1, duration: 0.85, ease: pullEase, stagger: 0.03 }
 
 export function HeroChalk({ ready }) {
   const root = useRef(null)
@@ -66,12 +77,13 @@ export function HeroChalk({ ready }) {
   const [waited, setWaited] = useState(false)
   useEffect(() => {
     if (!ready || sceneLive || reduced) return
-    let id = setTimeout(() => {
-      // the first frame compiles the shaders and can stall: once it has drawn, give it a little longer
+    // timed on the animation clock (gsap's ticker), so a stalled or frame-stepped page can't race past the scene
+    let call = gsap.delayedCall(SCENE_WAIT, () => {
+      // the canvas has started drawing: give it a little longer to bring its dust in
       if (!drawn.current) setWaited(true)
-      else id = setTimeout(() => setWaited(true), SCENE_WAIT * 2)
-    }, SCENE_WAIT)
-    return () => clearTimeout(id)
+      else call = gsap.delayedCall(SCENE_WAIT * 2, () => setWaited(true))
+    })
+    return () => call.kill()
   }, [ready, sceneLive, reduced])
   const go = ready && (reduced || sceneLive || waited)
   useEffect(() => {
@@ -83,12 +95,8 @@ export function HeroChalk({ ready }) {
   const onLock = useCallback(() => setLocked(true), [])
   useEffect(() => {
     if (!go || locked) return
-    const id = setTimeout(() => {
-      // dev only: frame-stepped verification runs far slower than real time, so the scene alone decides
-      if (import.meta.env.DEV && motion.current.dbgDt) return
-      setLocked(true)
-    }, sceneLive ? LOCK_WAIT : 350)
-    return () => clearTimeout(id)
+    const call = gsap.delayedCall(sceneLive ? LOCK_WAIT : 0.35, () => setLocked(true))
+    return () => call.kill()
   }, [go, locked, sceneLive])
 
   useGSAP(
@@ -113,6 +121,7 @@ export function HeroChalk({ ready }) {
       const items = gsap.utils.toArray('.hc-foot [data-pull]', root.current)
       const tl = gsap.timeline({
         defaults: { ease: 'none' },
+        // Lenis already smooths the scroll; the scene low-passes the wind once more on its side
         scrollTrigger: { trigger: root.current, start: 'top top', end: 'bottom top', scrub: true, invalidateOnRefresh: true },
       })
       tl.to(m, { exit: 1, duration: 1 }, 0)
@@ -136,19 +145,20 @@ export function HeroChalk({ ready }) {
         .fromTo(
           items,
           { x: 0, y: 0, skewX: 0, scaleX: 1, opacity: 1, transformOrigin: '0% 50%' },
-          // blown off to the right with the gust front, front-loaded so it reads while still on screen
+          // blown off to the right with the gust front, early: the copy rises faster than the dust and is gone
+          // before it could pass over the letters
           {
-            x: () => window.innerWidth * 0.72,
-            y: -36,
+            x: () => window.innerWidth * 0.6,
+            y: -28,
             skewX: -24,
             scaleX: 1.4,
             opacity: 0,
-            duration: 0.4,
+            duration: 0.26,
             ease: 'power2.in',
-            stagger: 0.03,
+            stagger: 0.022,
             immediateRender: false,
           },
-          0.05,
+          0.015,
         )
         .to(ui.current, { opacity: 0, duration: 0.15 }, 0.82)
     },
@@ -208,7 +218,8 @@ export function HeroChalk({ ready }) {
     let downY = 0
     let downT = 0
     let holdTimer = 0
-    const stamp = (e) => (e.timeStamp > 0 ? e.timeStamp : performance.now())
+    // stamped on the same clock as the frame loop (event timestamps can come from another clock)
+    const stamp = () => performance.now()
     const local = (e) => {
       if (!rect) rect = el.getBoundingClientRect()
       return [e.clientX - rect.left, e.clientY - rect.top]

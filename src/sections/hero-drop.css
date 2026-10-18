@@ -150,6 +150,7 @@
     background: linear-gradient(to right, rgb(6 6 9 / 0.88) 0%, rgb(6 6 9 / 0.8) 58%, rgb(6 6 9 / 0) 100%);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 2.1rem);
     mask-image: linear-gradient(to bottom, transparent 0, #000 2.1rem);
+    opacity: var(--hd-scrim, 1);
     pointer-events: none;
   }
   .hd-lead {
@@ -298,8 +299,7 @@
     inset: 0 0 34% 0;
     background:
       radial-gradient(60% 70% at 38% 62%, rgb(150 152 164 / 0.22), transparent 72%),
-      repeating-linear-gradient(to bottom, transparent 0 46px, rgb(0 0 0 / 0.38) 46px 48px),
-      repeating-linear-gradient(to right, transparent 0 94px, rgb(0 0 0 / 0.3) 94px 96px),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96'%3E%3Cg fill='none' stroke='%23000' stroke-opacity='.34' stroke-width='2'%3E%3Cpath d='M0 47h96M0 95h96M95 0v47M47 48v48'/%3E%3C/g%3E%3C/svg%3E"),
       linear-gradient(to bottom, #15161b, #23252c 70%, #1b1c21);
     -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0.55), #000 40%);
     mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0.55), #000 40%);

@@ -2,9 +2,12 @@ import * as THREE from 'three'
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { CAP_HEIGHT, glyphPath2D, glyphShapes, layoutText } from '../glyphs'
 import {
+  DENTS,
+  SDF_MAX,
   SPLATS,
   STEEL_FRAG_ANISO,
   STEEL_FRAG_EMIT,
+  STEEL_FRAG_FORGE,
   STEEL_FRAG_NORMAL,
   STEEL_FRAG_OUT,
   STEEL_FRAG_PARS,
@@ -25,7 +28,6 @@ export const YAW_JITTER = [-0.034, 0.026, -0.012, 0.038, -0.028]
 
 const SDF_RES = 72 // distance-field texels per world unit (cap height = 1)
 const SDF_PAD = 4
-export const SDF_MAX = 0.2 // world units of inside distance mapped to 1.0
 
 /**
  * Front and back caps are flat: their long fan triangles must not inherit the bevel's tilted vertex normals
@@ -291,16 +293,23 @@ export function buildWord({ lite = false } = {}) {
 /** Uniforms shared by every letter (same objects, updated once per frame). */
 export function createSharedUniforms() {
   const splats = []
-  for (let i = 0; i < SPLATS; i++) splats.push(new THREE.Vector4(0, 0, 0.2, 0))
-  const temper = []
-  for (let i = 0; i < SPLATS / 4; i++) temper.push(new THREE.Vector4())
+  const ends = []
+  for (let i = 0; i < SPLATS; i++) {
+    splats.push(new THREE.Vector4(0, 0, 0.1, 0))
+    ends.push(new THREE.Vector4())
+  }
+  const dents = []
+  for (let i = 0; i < DENTS; i++) dents.push(new THREE.Vector4(0, 0, 0.05, 0))
   return {
     uSplats: { value: splats },
-    uSplatT: { value: temper },
+    uSplatB: { value: ends },
     uSplatOn: { value: 0 }, // 0 when no splat is live: the per-fragment loop is skipped
-    uTorch: { value: new THREE.Vector3(1, 0, 0) },
+    uDents: { value: dents },
+    uDentOn: { value: 0 },
     uGlint: { value: new THREE.Vector4(-9, 0.07, 0, 0) },
     uBump: { value: 0.0032 },
+    uForgeDir: { value: new THREE.Vector3(-0.7, 0.05, -0.7).normalize() },
+    uForgeEnv: { value: new THREE.Vector3() },
     // 1 while the floor's reflection pass renders (alpha then carries height above the floor)
     uMirror: { value: 0 },
     uFloorY: { value: -0.5 },
@@ -308,24 +317,27 @@ export function createSharedUniforms() {
 }
 
 /**
- * Satin silver forged steel with a live temperature field. Per-letter heat + local heat splats drive a
- * blackbody emission ramp; the core holds heat longer than the edges (distance field); hot steel turns to
- * dark oxide before it glows; on the way back to cold it passes through temper colours. Cold, it is
- * brushed (anisotropic) satin steel with faint hammer dimples and a slow travelling glint.
+ * Satin silver forged steel with a live temperature field. Per-letter heat + local heat capsules drive a
+ * blackbody emission ramp; the arrises run a little cooler in a narrow band (distance field); hot steel wears a
+ * dark mill scale that flakes off below dull red, leaving a faint straw temper line along the edges and thin
+ * temper rings round a blow. Cold, it is brushed (anisotropic) satin steel with faint hammer dimples, the
+ * dents of past blows and a slow travelling glint.
  */
 export function createSteelMaterial(shared, { rest, seed, lite, sdf }) {
   const mat = new THREE.MeshPhysicalMaterial({
     color: '#d6d9e0',
     metalness: 1,
     roughness: 0.27,
-    envMapIntensity: 1.25,
+    envMapIntensity: 1.0,
     anisotropy: 0.55,
     anisotropyRotation: Math.PI / 2,
   })
   const own = {
     uTemp: { value: 0 },
-    uTemper: { value: 0 },
+    uScale: { value: 0 },
+    uTint: { value: 0 },
     uRim: { value: 0 },
+    uHalfD: { value: DEPTH / 2 },
     uRest: { value: new THREE.Vector2(rest[0], rest[1]) },
     uSeed: { value: seed },
     uSdf: { value: sdf.texture },
@@ -336,9 +348,12 @@ export function createSteelMaterial(shared, { rest, seed, lite, sdf }) {
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, own)
     shader.uniforms.uSplats = shared.uSplats
-    shader.uniforms.uSplatT = shared.uSplatT
+    shader.uniforms.uSplatB = shared.uSplatB
     shader.uniforms.uSplatOn = shared.uSplatOn
-    shader.uniforms.uTorch = shared.uTorch
+    shader.uniforms.uDents = shared.uDents
+    shader.uniforms.uDentOn = shared.uDentOn
+    shader.uniforms.uForgeDir = shared.uForgeDir
+    shader.uniforms.uForgeEnv = shared.uForgeEnv
     shader.uniforms.uGlint = shared.uGlint
     shader.uniforms.uBump = shared.uBump
     shader.uniforms.uMirror = shared.uMirror
@@ -353,22 +368,27 @@ export function createSteelMaterial(shared, { rest, seed, lite, sdf }) {
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${STEEL_FRAG_NORMAL}`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${STEEL_FRAG_EMIT}`)
       .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${STEEL_FRAG_ANISO}`)
+      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${STEEL_FRAG_FORGE}`)
       .replace('#include <dithering_fragment>', `#include <dithering_fragment>\n${STEEL_FRAG_OUT}`)
   }
-  mat.customProgramCacheKey = () => (lite ? 'hf-steel3-lite' : 'hf-steel3')
+  mat.customProgramCacheKey = () => (lite ? 'hf-steel4-lite' : 'hf-steel4')
   return mat
 }
 
 /** Heat (0..~1.2) at a point on the word plane, mirroring the shader (without the noise and edge shaping). */
-export function heatAt(letterTemp, splats, x, y) {
+export function heatAt(letterTemp, splats, ends, x, y) {
   let t = letterTemp
   for (let i = 0; i < splats.length; i++) {
     const s = splats[i]
     if (s.w <= 0.002) continue
-    const dx = x - s.x
-    const dy = y - s.y
-    const q = (dx * dx + dy * dy) / (s.z * s.z)
-    t += s.w * Math.exp(-q * 0.95 - 0.25 * q * q)
+    const e = ends[i]
+    const bx = e.x - s.x
+    const by = e.y - s.y
+    const bb = bx * bx + by * by
+    const h = bb > 1e-6 ? Math.min(1, Math.max(0, ((x - s.x) * bx + (y - s.y) * by) / bb)) : 0
+    const dx = x - s.x - bx * h
+    const dy = y - s.y - by * h
+    t += s.w * Math.exp((-(dx * dx + dy * dy) / (s.z * s.z)) * 1.7)
   }
   return t
 }

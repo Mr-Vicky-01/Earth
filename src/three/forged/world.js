@@ -3,7 +3,7 @@ import { NOISE } from './shaders'
 
 /*
  * The forge workshop around the word: a soot-stained brick back wall (and a side wall the phone camera sees),
- * a rack of tongs and hammers lit by the forge, out-of-focus props (an anvil on its stump, a hoist chain), and
+ * a rack of tongs and hammers lit by the forge, an oak roof post in the mid-ground, and
  * a floor of cast-iron plates with a rough, blurred reflection and contact shadows.
  *
  * Scale: 1 world unit = 0.5 m (the letters' cap height). Everything is lit by the same few lights with
@@ -15,9 +15,9 @@ import { NOISE } from './shaders'
 
 export const WALL_Z = -10
 export const SIDE_X = 13
-export const NLIGHTS = 7 // 0 forge, 1 window, 2..6 letters
-export const FORGE_POS = [-10.2, 1.45, -8.9] // the fire bed in the hearth, off-screen left (y is world)
-export const WINDOW_POS = [9, 6.4, -5]
+export const NLIGHTS = 7 // 0 forge, 1 work lamp, 2..6 letters
+export const FORGE_POS = [-8.9, 0.85, -9.2] // the fire bed in the hearth, just off-screen left (y is world)
+export const LAMP_POS = [5.6, 5.3, -4.4] // a caged work lamp hanging off-screen, top right
 
 /* ------------------------------------------------------------------ */
 /* GLSL shared by every workshop surface                               */
@@ -38,6 +38,21 @@ float hfAir(vec3 o, vec3 d, float T, vec3 L, float r2) {
   float b = dot(q, d);
   float h = sqrt(max(dot(q, q) - b * b, 0.0) + r2);
   return (atan((T - b) / h) + atan(b / h)) / h;
+}
+// irradiance split three ways: the room (ambient + lamp), the forge, and the hot letters (lights 2..)
+void hfIrr3(vec3 p, vec3 n, out vec3 room, out vec3 forge, out vec3 hot) {
+  room = uAmb * (0.55 + 0.45 * n.y);
+  forge = vec3(0.0);
+  hot = vec3(0.0);
+  for (int i = 0; i < ${NLIGHTS}; i++) {
+    vec3 q = uLPos[i].xyz - p;
+    float qq = dot(q, q);
+    float c = clamp((dot(n, q) * inversesqrt(qq) + 0.08) / 1.08, 0.0, 1.0);
+    vec3 v = uLCol[i] * c / (qq + uLPos[i].w);
+    if (i == 0) forge = v;
+    else if (i == 1) room += v;
+    else hot += v;
+  }
 }
 // irradiance from every light; light index 0 (the forge) is returned separately so it can be shadowed
 vec3 hfIrr(vec3 p, vec3 n, out vec3 forge) {
@@ -71,11 +86,12 @@ float hfCoc(vec3 p) {
 vec3 hfAtmos(vec3 col, vec3 p) {
   vec3 o = cameraPosition;
   vec3 d = p - o;
-  float T = length(d);
+  float T = max(length(d), 1e-4);
   d /= T;
   float tr = exp(-uHaze.x * T);
   vec3 s = vec3(0.0);
-  for (int i = 0; i < ${NLIGHTS}; i++) s += uLCol[i] * hfAir(o, d, T, uLPos[i].xyz, uLPos[i].w + 0.25);
+  // the forge sits in its hood: only part of its light gets out into the room's air
+  for (int i = 0; i < ${NLIGHTS}; i++) s += uLCol[i] * hfAir(o, d, T, uLPos[i].xyz, uLPos[i].w + 0.25) * (i == 0 ? 0.4 : 1.0);
   float t = uHaze.w;
   vec3 sp = o + d * min(T, 24.0) * 0.72;
   float sm = hfFbm(sp * vec3(0.32, 0.5, 0.32) + vec3(t * 0.035, -t * 0.09, t * 0.025));
@@ -97,6 +113,8 @@ float hfSmin(float a, float b, float k) {
   return mix(b, a, h) - k * h * (1.0 - h);
 }
 // height above the floor, stored in alpha during the reflection pass (the floor blurs by it)
+// a single NaN or Inf pixel would be smeared over the whole frame by the bloom's mip chain: never emit one
+vec3 hfSafe(vec3 c) { return (any(isnan(c)) || any(isinf(c))) ? vec3(0.0) : c; }
 float hfMirrorA(float y) { return uMirror > 0.5 ? clamp((y - uFloorY) * 0.25, 0.0, 1.0) : 1.0; }
 `
 
@@ -123,31 +141,30 @@ varying vec3 vW;
 varying vec3 vN;
 // tools hanging on a rail near the forge, in wall coordinates (x, height above the floor)
 float hfTools(vec2 p) {
-  if (p.x < -7.4 || p.x > -2.9 || p.y < 0.55 || p.y > 2.4) return 1.0;
-  float d = hfBox(p - vec2(-5.2, 2.2), vec2(1.95, 0.042)) - 0.006;
-  // tongs
-  d = min(d, hfSeg(p, vec2(-6.62, 2.17), vec2(-6.71, 1.0)) - 0.015);
-  d = min(d, hfSeg(p, vec2(-6.55, 2.17), vec2(-6.47, 1.0)) - 0.015);
-  d = min(d, hfSeg(p, vec2(-6.71, 1.0), vec2(-6.6, 0.8)) - 0.021);
-  d = min(d, hfSeg(p, vec2(-6.47, 1.0), vec2(-6.57, 0.8)) - 0.021);
-  d = min(d, length(p - vec2(-6.59, 1.02)) - 0.03);
+  if (p.x < -7.0 || p.x > -3.7 || p.y < 0.6 || p.y > 2.48) return 1.0;
+  // a short rail, with hammer heads resting on it and their handles hanging through
+  float d = hfBox(p - vec2(-5.35, 2.2), vec2(1.45, 0.034)) - 0.006;
+  // tongs hung by the reins: reins close together, a boss at the rivet, short heavy jaws
+  d = min(d, hfSeg(p, vec2(-6.66, 2.17), vec2(-6.61, 1.06)) - 0.02);
+  d = min(d, hfSeg(p, vec2(-6.56, 2.17), vec2(-6.59, 1.06)) - 0.02);
+  d = min(d, length(p - vec2(-6.6, 1.04)) - 0.03);
+  d = min(d, hfSeg(p, vec2(-6.61, 1.03), vec2(-6.66, 0.84)) - 0.02);
+  d = min(d, hfSeg(p, vec2(-6.59, 1.03), vec2(-6.56, 0.86)) - 0.018);
   // sledge
-  d = min(d, hfSeg(p, vec2(-5.98, 2.18), vec2(-5.98, 1.3)) - 0.022);
-  d = min(d, hfBox(p - vec2(-5.98, 1.24), vec2(0.14, 0.06)) - 0.01);
-  // long tongs, hung a little askew
-  d = min(d, hfSeg(p, vec2(-5.33, 2.17), vec2(-5.5, 0.82)) - 0.014);
-  d = min(d, hfSeg(p, vec2(-5.25, 2.17), vec2(-5.2, 0.82)) - 0.014);
-  d = min(d, hfSeg(p, vec2(-5.5, 0.82), vec2(-5.37, 0.64)) - 0.02);
-  d = min(d, hfSeg(p, vec2(-5.2, 0.82), vec2(-5.3, 0.64)) - 0.02);
+  d = min(d, hfBox(p - vec2(-5.98, 2.32), vec2(0.19, 0.085)) - 0.012);
+  d = min(d, hfSeg(p, vec2(-5.98, 2.25), vec2(-5.97, 1.42)) - 0.026);
+  // a longer pair of tongs, hung a touch askew
+  d = min(d, hfSeg(p, vec2(-5.38, 2.17), vec2(-5.42, 0.98)) - 0.015);
+  d = min(d, hfSeg(p, vec2(-5.29, 2.17), vec2(-5.39, 0.98)) - 0.015);
+  d = min(d, length(p - vec2(-5.41, 0.96)) - 0.026);
+  d = min(d, hfSeg(p, vec2(-5.42, 0.95), vec2(-5.45, 0.78)) - 0.018);
+  d = min(d, hfSeg(p, vec2(-5.4, 0.95), vec2(-5.37, 0.79)) - 0.016);
   // cross-pein hammer
-  d = min(d, hfSeg(p, vec2(-4.6, 2.18), vec2(-4.6, 1.5)) - 0.019);
-  d = min(d, hfBox(p - vec2(-4.6, 1.45), vec2(0.105, 0.045)) - 0.008);
+  d = min(d, hfBox(p - vec2(-4.62, 2.3), vec2(0.13, 0.06)) - 0.01);
+  d = min(d, hfSeg(p, vec2(-4.62, 2.24), vec2(-4.63, 1.6)) - 0.022);
   // fuller
-  d = min(d, hfSeg(p, vec2(-4.05, 2.18), vec2(-4.05, 1.62)) - 0.017);
-  d = min(d, hfBox(p - vec2(-4.05, 1.56), vec2(0.05, 0.07)) - 0.01);
-  // poker with a hook
-  d = min(d, hfSeg(p, vec2(-3.42, 2.18), vec2(-3.42, 0.95)) - 0.012);
-  d = min(d, max(abs(length(p - vec2(-3.34, 0.95)) - 0.08) - 0.012, p.y - 0.95));
+  d = min(d, hfBox(p - vec2(-4.08, 2.31), vec2(0.06, 0.085)) - 0.01);
+  d = min(d, hfSeg(p, vec2(-4.08, 2.23), vec2(-4.07, 1.72)) - 0.02);
   return d;
 }
 void main() {
@@ -164,15 +181,21 @@ void main() {
   const float BL = 0.45;
   const float MW = 0.011;
   float row = floor(wc.y / CH);
-  float u = wc.x / BL + 0.5 * mod(row, 2.0) + (back ? 0.0 : 0.27);
+  // hand-laid: each course sits a little off the bond
+  float u = wc.x / BL + 0.5 * mod(row, 2.0) + (hfHash(vec3(row, 2.0, 3.0)) - 0.5) * 0.16 + (back ? 0.0 : 0.27);
   vec2 id = vec2(floor(u), row);
   vec2 f = vec2(fract(u) * BL, fract(wc.y / CH) * CH);
   vec2 e = min(f, vec2(BL, CH) - f);
-  float ed = min(e.x, e.y);
-  float brick = smoothstep(MW - bl, MW + bl, ed);
+  float fine0 = 1.0 / (1.0 + bl * 30.0);
+  // chipped arrises: old brick loses its corners and edges unevenly
+  float chip = hfNoise(vec3(wc * 34.0, 5.0 + hfHash(vec3(id, 2.2)) * 7.0));
+  float ed = min(e.x, e.y) - chip * chip * 0.016 * fine0;
+  // joints raked out to different depths, wider here and there
+  float mw = MW * (0.75 + 0.7 * hfNoise(vec3(wc * 3.1, 9.0)));
+  float brick = smoothstep(mw - bl, mw + bl, ed);
   // worn arrises: the face rolls down into the joint; blur flattens the relief with distance from focus
   const float W = 0.03;
-  float k = clamp((ed - MW) / (W + bl), 0.0, 1.0);
+  float k = clamp((ed - mw) / (W + bl), 0.0, 1.0);
   float slope = 6.0 * k * (1.0 - k) * 0.22 * W / (W + 2.0 * bl);
   vec2 g = e.x < e.y ? vec2(f.x < BL * 0.5 ? -1.0 : 1.0, 0.0) : vec2(0.0, f.y < CH * 0.5 ? -1.0 : 1.0);
   float r1 = hfHash(vec3(id, 1.7));
@@ -184,18 +207,25 @@ void main() {
   vec3 n = normalize(N + Tg * nl.x + vec3(0.0, 1.0, 0.0) * nl.y);
 
   // fired clay, a few over-burnt headers, mottled; grey lime mortar
-  vec3 clay = mix(vec3(0.17, 0.078, 0.05), vec3(0.12, 0.066, 0.05), r1);
-  clay = mix(clay, vec3(0.055, 0.042, 0.038), step(0.88, r2) * 0.85);
+  vec3 clay = mix(vec3(0.16, 0.08, 0.056), vec3(0.115, 0.07, 0.056), r1) * (0.82 + 0.36 * r3);
+  clay = mix(clay, vec3(0.07, 0.052, 0.046), step(0.93, r2) * 0.5);
   float fine = 1.0 / (1.0 + bl * 14.0);
   float mott = hfFbm(vec3(wc * 2.6, 1.3));
   clay *= 0.72 + 0.56 * mix(0.5, mott, fine);
-  vec3 alb = mix(vec3(0.1, 0.094, 0.085), clay, brick);
+  vec3 mortar = vec3(0.1, 0.094, 0.085) * (0.55 + 0.8 * mix(0.5, hfNoise(vec3(wc * 5.0, 8.0)), fine));
+  vec3 alb = mix(mortar, clay, brick);
 
   // soot: heavier up high, a plume above the forge, rain-down streaks; splash grime at the foot
-  float plume = back ? exp(-pow((wc.x - uLPos[0].x) / (0.9 + 0.5 * max(wc.y - 2.0, 0.0)), 2.0)) * smoothstep(1.6, 3.2, wc.y) : 0.0;
+  float pq = (wc.x - uLPos[0].x) / (0.9 + 0.5 * max(wc.y - 2.0, 0.0));
+  float plume = back ? exp(-pq * pq) * smoothstep(1.6, 3.2, wc.y) : 0.0;
   float streak = hfNoise(vec3(wc.x * 2.4, wc.y * 0.22, 2.0));
-  float soot = clamp(0.42 + 0.5 * plume + 0.32 * smoothstep(1.2, 6.0, wc.y) + 0.3 * (streak - 0.5) + 0.12 * (mott - 0.5), 0.0, 0.96);
-  alb *= 1.0 - 0.82 * soot;
+  float patches = hfFbm(vec3(wc * 0.32, 4.0));
+  // most of the wall is soot-dark; it is thinnest low down at the sides, where the wash survives
+  float soot = clamp(0.58 + 0.45 * plume + 0.3 * smoothstep(1.0, 5.0, wc.y) + 0.3 * (streak - 0.5) + 0.12 * (mott - 0.5) + 0.55 * (patches - 0.5), 0.0, 0.97);
+  // what is left of an old lime wash, low on the wall where the soot is thinnest
+  float wash = smoothstep(0.58, 0.78, hfFbm(vec3(wc * 0.5 + 11.0, 2.0))) * (1.0 - smoothstep(0.6, 2.4, wc.y)) * (1.0 - soot);
+  alb = mix(alb, vec3(0.19, 0.18, 0.165) * (0.7 + 0.3 * mott), wash * 0.55);
+  alb *= 1.0 - 0.88 * soot;
   alb *= mix(0.62, 1.0, smoothstep(0.0, 0.9, wc.y));
 
   vec3 forge;
@@ -218,12 +248,15 @@ void main() {
       vec3 tn = normalize(N * max(c, 0.3) + (Tg * ge.x + vec3(0.0, 1.0, 0.0) * ge.y) * (1.0 - c));
       vec3 tf;
       vec3 te = hfIrr(p + N * 0.07, tn, tf);
-      vec3 talb = abs(wc.y - 2.2) < 0.06 ? vec3(0.055, 0.036, 0.024) : vec3(0.032, 0.031, 0.033);
-      // iron catches a little sheen on the edge that faces the fire
-      tcol = talb * (te + tf) + tf * 0.02 * (1.0 - c);
+      vec3 talb = abs(wc.y - 2.2) < 0.05 ? vec3(0.04, 0.027, 0.018) : vec3(0.017, 0.016, 0.017);
+      // black iron: a thin sheen only on the edge that faces the fire
+      float rim = (1.0 - c) * (1.0 - c) * (1.0 - c);
+      tcol = talb * (te + tf) + tf * 0.03 * rim;
     }
   }
-  vec3 col = mix(tcol, alb * (E + forge), tools);
+  // joints sit back from the face: in raking light they are in shadow
+  float joint = mix(0.3, 1.0, brick);
+  vec3 col = mix(tcol, alb * (E + forge) * joint, tools);
 
   // smoke hugging the wall, drifting up and away from the forge, lit by whatever light reaches it
   float sm = hfFbm(vec3(wc.x * 0.38 - t * 0.05, wc.y * 0.55 - t * 0.12, t * 0.04 + (back ? 0.0 : 3.0)));
@@ -231,7 +264,9 @@ void main() {
   col = mix(col, vec3(0.16, 0.14, 0.12) * hfIrrIso(p + N * 0.4), clamp(smD * 0.75, 0.0, 0.85));
 
   col = hfAtmos(col, p);
-  gl_FragColor = vec4(col, hfMirrorA(p.y));
+  // the side wall's low courses would streak across the rough iron in its reflection: keep it faint there
+  if (uMirror > 0.5 && !back) col *= 0.35;
+  gl_FragColor = vec4(hfSafe(col), hfMirrorA(p.y));
 }
 `
 
@@ -256,7 +291,10 @@ uniform sampler2D uRefl;
 uniform sampler2D uReflBlur;
 uniform vec4 uFoot[${FOOT_N}]; // contact segments on the floor: x0, z0, x1, z1
 uniform float uFootK[${FOOT_N}];
+uniform vec3 uFootC[${FOOT_N}]; // glow of a hot foot on the plate (linear)
 uniform float uFootHalf;
+uniform vec4 uPostFoot; // the roof post's footing: x, z, half width, on
+uniform float uDbg;
 varying vec3 vW;
 varying vec4 vR;
 void main() {
@@ -275,7 +313,8 @@ void main() {
   float pr = hfHash(vec3(pid, 3.1));
   float pr2 = hfHash(vec3(pid, 8.7));
   float n1 = hfFbm(vec3(p.xz * 1.1, 0.5));
-  float n2 = hfNoise(vec3(p.x * 0.7 + pr * 9.0, p.z * 11.0, 4.0));
+  // worn, polished patches where people stand (isotropic: a streaky pattern here would band the reflection)
+  float n2 = hfNoise(vec3(p.xz * 1.7 + pr * 9.0, 4.0));
   float n3 = hfFbm(vec3(p.xz * 4.3, 7.0));
   vec2 tilt = (vec2(pr, pr2) - 0.5) * 0.028;
 
@@ -284,10 +323,12 @@ void main() {
   vec3 alb = vec3(0.036, 0.034, 0.032) * (0.7 + 0.6 * mix(0.5, n1, fine)) * (0.82 + 0.36 * pr);
   alb = mix(alb, vec3(0.05, 0.034, 0.024), smoothstep(0.55, 0.8, n3) * 0.6 * fine + nearForge * 0.3);
   float rough = clamp(0.5 + 0.28 * (n1 - 0.5) + 0.16 * (pr2 - 0.5) - 0.18 * smoothstep(0.6, 0.85, n2) * fine, 0.22, 0.85);
-  vec3 n = normalize(vec3(tilt.x + (n3 - 0.5) * 0.05 * fine, 1.0, tilt.y + (n2 - 0.5) * 0.03 * fine));
+  float n4 = hfFbm(vec3(p.xz * 4.3, 11.0));
+  vec3 n = normalize(vec3(tilt.x + (n3 - 0.5) * 0.04 * fine, 1.0, tilt.y + (n4 - 0.5) * 0.04 * fine));
 
-  // contact shadow under every letter foot (fades as a letter lifts)
+  // contact shadow under every letter foot (fades as a letter lifts); a hot foot lights the plate instead
   float ao = 1.0;
+  vec3 footGlow = vec3(0.0);
   for (int i = 0; i < ${FOOT_N}; i++) {
     float k = uFootK[i];
     if (k <= 0.001) continue;
@@ -297,103 +338,124 @@ void main() {
     float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-5), 0.0, 1.0);
     float d = max(length(pa - ba * h) - uFootHalf, 0.0);
     ao *= 1.0 - k * (0.62 * exp(-d / 0.045) + 0.3 * exp(-d / 0.32));
+    footGlow += uFootC[i] * (exp(-d / 0.05) * 0.5 + exp(-d / 0.18) * 0.25);
+  }
+  // the roof post's footing
+  if (uPostFoot.w > 0.5) {
+    vec2 pd = max(abs(p.xz - uPostFoot.xy) - uPostFoot.z, 0.0);
+    float d = length(pd);
+    ao *= 1.0 - 0.55 * exp(-d / 0.06) - 0.25 * exp(-d / 0.4);
   }
   // where the floor runs into the wall
   ao *= mix(0.55, 1.0, smoothstep(0.0, 1.2, p.z - ${WALL_Z.toFixed(1)}));
 
+  vec3 room;
   vec3 forge;
-  vec3 E = hfIrr(p, n, forge);
-  vec3 col = alb * (E + forge) * ao * (1.0 - seam * 0.7);
+  vec3 hot;
+  hfIrr3(p, n, room, forge, hot);
+  // the forge's light leaves through its mouth: a warm wedge across the plates, fading at its sides
+  vec2 fq = p.xz - uLPos[0].xz;
+  float wedge = smoothstep(0.5, 0.86, dot(fq, vec2(0.8, 0.6)) / max(length(fq), 1e-3));
+  forge *= mix(0.25, 1.45, wedge);
+  // the room's light is shadowed at a foot; a letter's own light is not (it is the light)
+  vec3 col = alb * ((room + forge) * ao + hot) * (1.0 - seam * 0.45) + footGlow * alb * 6.0;
 
-  // reflection: projective lookup, broken up by the plate tilt; blur grows with the height of what is reflected
-  vec2 ruv = vR.xy / vR.w + n.xz * vec2(0.05, 0.11);
+  // reflection: projective lookup, broken up by the plate tilt. Rough iron spreads a reflection more the
+  // higher above the floor the reflected point is, and streaks it toward the viewer: a dithered gather from the
+  // blurred layer with that radius (the sharp layer only right at the contact line)
+  vec2 ruv = vR.xy / vR.w + n.xz * vec2(0.08, 0.16);
   vec4 s0 = texture2D(uRefl, ruv);
-  float hgt = s0.a * 4.0;
-  float bm = smoothstep(0.0, 0.55, hgt * (0.6 + rough) + rough * 0.2);
-  vec3 sb = texture2D(uReflBlur, ruv).rgb;
-  vec3 sb2 = 0.5 * (texture2D(uReflBlur, ruv + vec2(0.0, 0.012 * bm)).rgb + texture2D(uReflBlur, ruv - vec2(0.0, 0.02 * bm)).rgb);
-  vec3 rc = mix(s0.rgb, mix(sb, sb2, smoothstep(0.4, 1.0, bm)), bm);
+  // height from the blurred layer: the fade must be as soft as the reflection it fades
+  float hgt = texture2D(uReflBlur, ruv).a * 4.0;
+  // rough iron never gives a sharp image: a floor of blur set by the roughness and how far off the plate looks,
+  // growing with the reflected point's height above the floor
+  float far = clamp(distance(cameraPosition, p) * 0.04, 0.0, 1.0);
+  float rr = (0.009 + 0.008 * far) * (0.6 + rough) + 0.022 * clamp(hgt, 0.0, 1.5) * (0.5 + rough);
+  // dither rotated every frame (interleaved gradient noise): no fixed pattern swimming as the camera drifts
+  vec2 fc = gl_FragCoord.xy + 5.588238 * floor(fract(uHaze.w * 0.5) * 120.0);
+  float ang = 6.2831853 * fract(52.9829189 * fract(dot(fc, vec2(0.06711056, 0.00583715))));
+  vec3 acc = vec3(0.0);
+  for (int k = 0; k < 6; k++) {
+    float fk = (float(k) + 0.5) / 6.0;
+    float a = ang + float(k) * 2.3999632;
+    acc += texture2D(uReflBlur, ruv + vec2(cos(a), sin(a) * 2.6) * rr * sqrt(fk)).rgb;
+  }
+  vec3 rc = mix(s0.rgb, acc / 6.0, 0.6 + 0.4 * smoothstep(0.0, 0.1, hgt));
   vec3 v = normalize(cameraPosition - p);
   float nv = clamp(dot(n, v), 0.0, 1.0);
   float F = 0.04 + 0.96 * pow(1.0 - nv, 5.0);
-  float refl = F * (1.0 - 0.72 * rough) * exp(-hgt * 0.75) * mix(0.55, 1.0, ao) * (1.0 - seam);
+  float refl = F * (1.0 - 0.8 * rough) * exp(-hgt * 2.2) * mix(0.55, 1.0, ao) * (1.0 - seam);
   col += rc * refl;
+  // a broad sheen of the lamp and the forge on the iron (rough Blinn-Phong, energy-normalised)
+  float pw = 2.0 / max(rough * rough * rough * rough, 0.002) - 2.0;
+  for (int i = 0; i < 2; i++) {
+    vec3 q = uLPos[i].xyz - p;
+    float qq = dot(q, q);
+    vec3 l = q * inversesqrt(qq);
+    vec3 hv = normalize(l + v + vec3(0.0, 1e-4, 0.0));
+    float nl = max(dot(n, l), 0.0);
+    col += uLCol[i] * nl / (qq + uLPos[i].w) * pow(max(dot(n, hv), 0.0), pw) * (pw + 8.0) / 25.13 * F * ao * (i == 0 ? mix(0.25, 1.45, wedge) : 1.0);
+  }
 
   col = hfAtmos(col, p);
-  gl_FragColor = vec4(col, 1.0);
+  if (uDbg > 0.5) col = uDbg > 2.5 ? hfAtmos(alb * ((room + forge) * ao + hot), p) : uDbg > 1.5 ? s0.rgb : vec3(s0.a, hgt * 0.25, 0.0);
+  gl_FragColor = vec4(hfSafe(col), 1.0);
 }
 `
 
 /* ------------------------------------------------------------------ */
-/* Props: out-of-focus cards (anvil on its stump, a hoist chain)        */
+/* Mid-ground: a square oak roof post at the edge of frame, drawn as a  */
+/* camera-facing card whose two visible faces are shaded for the real  */
+/* viewing angle; out of focus like everything off the focal plane      */
 /* ------------------------------------------------------------------ */
-const PROP_FRAG = /* glsl */ `
+const POST_FRAG = /* glsl */ `
 ${WORLD_PARS}
-uniform float uKind;
-uniform float uSway;
+uniform float uTheta; // angle of the camera round the post (+: camera to its right)
+uniform float uW;     // post width (world units)
 varying vec3 vW;
 varying vec3 vN;
 varying vec2 vL;
-float hfAnvil(vec2 p, out float wood) {
-  float stump = hfBox(p - vec2(0.0, 0.55), vec2(0.43 + 0.04 * (0.55 - p.y), 0.55)) - 0.02;
-  float feet = hfBox(p - vec2(0.04, 1.17), vec2(0.5 - (p.y - 1.1) * 1.6, 0.07)) - 0.01;
-  float waist = hfBox(p - vec2(0.06, 1.33), vec2(0.24, 0.1));
-  float body = hfBox(p - vec2(0.12, 1.5), vec2(0.5, 0.1)) - 0.014;
-  float heel = hfBox(p - vec2(0.72, 1.555), vec2(0.18, 0.045)) - 0.006;
-  vec2 a = vec2(-0.36, 1.53);
-  vec2 b = vec2(-1.08, 1.6);
-  vec2 ba = b - a;
-  float h = clamp(dot(p - a, ba) / dot(ba, ba), 0.0, 1.0);
-  float horn = length(p - a - ba * h) - mix(0.095, 0.022, h);
-  float anv = hfSmin(hfSmin(feet, waist, 0.07), hfSmin(body, horn, 0.05), 0.05);
-  anv = min(anv, heel);
-  wood = step(stump, anv);
-  return min(stump, anv);
-}
-float hfChain(vec2 p) {
-  // links alternate face-on rings and edge-on bars; a hook at the bottom
-  float P = 0.15;
-  float y = p.y - 0.36;
-  float id = floor(y / P);
-  vec2 c = vec2(p.x, y - (id + 0.5) * P);
-  float ring = abs(hfBox(c, vec2(0.032, 0.062)) - 0.024) - 0.011;
-  float bar = hfBox(c, vec2(0.011, 0.085)) - 0.004;
-  float d = mod(id, 2.0) < 0.5 ? ring : bar;
-  d = y < 0.0 ? 1.0 : d;
-  // a J hook: the lower half of a ring, its point turned up, and the shank into the last link
-  float hook = max(abs(length(p - vec2(0.05, 0.17)) - 0.1) - 0.022, p.y - 0.17);
-  hook = min(hook, hfSeg(p, vec2(0.15, 0.17), vec2(0.14, 0.24)) - 0.018);
-  hook = min(hook, hfSeg(p, vec2(-0.05, 0.17), vec2(0.0, 0.38)) - 0.026);
-  return min(d, hook);
-}
-float hfProp(vec2 p, out float wood) {
-  wood = 0.0;
-  if (uKind < 0.5) return hfAnvil(p, wood);
-  // a slow pendulum sway about the top of the chain
-  p.x -= uSway * (7.0 - p.y);
-  return hfChain(p);
-}
 void main() {
   float bl = max(hfCoc(vW), length(fwidth(vL)) * 0.7);
-  float wood;
-  float d = hfProp(vL, wood);
-  float a = 1.0 - smoothstep(-bl, bl, d);
+  float c = cos(abs(uTheta));
+  float sn = sin(abs(uTheta));
+  float hw = 0.5 * uW * (c + sn);
+  float sgn = uTheta >= 0.0 ? 1.0 : -1.0;
+  // card x runs across the silhouette, from the far arris (-hw) over the camera-facing face, then the side face
+  float x = vL.x * sgn;
+  float edge = hw - abs(vL.x);
+  float a = smoothstep(-bl, bl, edge);
   if (a < 0.004) discard;
-  float w2;
-  vec2 g = vec2(hfProp(vL + vec2(0.008, 0.0), w2) - d, hfProp(vL + vec2(0.0, 0.008), w2) - d) / 0.008;
-  float th = uKind < 0.5 ? 0.09 : 0.02;
-  float c = clamp(-d / th, 0.0, 1.0);
-  vec3 N = normalize(vN);
-  vec3 R = normalize(cross(vec3(0.0, 1.0, 0.0), N));
-  vec3 n = normalize(N * max(c, 0.25) + (R * g.x + vec3(0.0, 1.0, 0.0) * g.y) * (1.0 - c));
+  float split = -hw + uW * c;
+  float side = smoothstep(split - bl - 0.006, split + bl + 0.006, x);
+  vec3 nf = vec3(0.0, 0.0, 1.0);
+  vec3 ns = vec3(sgn, 0.0, 0.0);
+  vec3 n = normalize(mix(nf, ns, side));
+  // weathered oak: coarse grain along the post (it still reads out of focus), checks, soot thicker up high
+  float fine = 1.0 / (1.0 + bl * 12.0);
+  float u = side > 0.5 ? (x - split) : (x + hw);
+  float grain = hfNoise(vec3(u * 22.0, vL.y * 0.9, 3.0)) * 0.6 + hfNoise(vec3(u * 70.0, vL.y * 3.0, 7.0)) * 0.4;
+  float check = smoothstep(0.035, 0.0, abs(fract(u * 2.6 + hfNoise(vec3(0.0, vL.y * 0.7, 1.0)) * 0.5) - 0.5) - 0.46) * fine;
+  vec3 alb = vec3(0.13, 0.09, 0.06) * (0.62 + 0.76 * mix(0.5, grain, fine)) * (1.0 - 0.55 * check);
+  alb *= 1.0 - 0.35 * smoothstep(2.0, 7.0, vL.y);
+  // the foot: grime splashed up, and the occlusion where it stands on the plates
+  alb *= mix(0.35, 1.0, smoothstep(0.0, 0.55, vL.y));
+  vec3 room;
   vec3 forge;
-  vec3 E = hfIrr(vW, n, forge);
-  vec3 alb = wood > 0.5 ? vec3(0.06, 0.04, 0.028) * (0.8 + 0.4 * hfNoise(vec3(vL.x * 3.0, vL.y * 18.0, 1.0))) : vec3(0.034, 0.034, 0.036);
-  vec3 col = alb * (E + forge);
-  // forged steel shows a sheen along the edge that faces the light
-  if (wood < 0.5) col += (forge + E * 0.3) * 0.03 * (1.0 - c);
+  vec3 hot;
+  hfIrr3(vW, n, room, forge, hot);
+  vec3 col = alb * (room + forge + hot);
+  // the worn arrises catch light: the far one from the forge behind it, the near one from the lamp and the word
+  vec3 r2;
+  vec3 f2;
+  vec3 h2;
+  hfIrr3(vW, vec3(-sgn * 0.8, 0.0, 0.6), r2, f2, h2);
+  float farA = (x + hw) / (0.016 + bl);
+  col += alb * (f2 * 2.6 + r2 * 0.6) * exp(-farA * farA) * a;
+  float aq = (x - split) / (0.012 + bl);
+  col += alb * (room + forge + hot) * 1.2 * exp(-aq * aq);
   col = hfAtmos(col, vW);
-  gl_FragColor = vec4(col, a);
+  gl_FragColor = vec4(hfSafe(col), a);
 }
 `
 
@@ -408,7 +470,7 @@ export function createWorldUniforms(floorY, mirror) {
   return {
     uLPos: { value: lpos },
     uLCol: { value: lcol },
-    uHaze: { value: new THREE.Vector4(0.012, 0.0026, 0.85, 0) },
+    uHaze: { value: new THREE.Vector4(0.012, 0.0018, 0.85, 0) },
     uHazeCol: { value: new THREE.Vector3(0.0036, 0.0032, 0.0034) },
     uAmb: { value: new THREE.Vector3(0.016, 0.018, 0.024) },
     uFocus: { value: new THREE.Vector2(12, 0.1) },
@@ -437,7 +499,11 @@ export function createWallMaterial(world, rack) {
 
 export function createFloorMaterial(world, reflector) {
   const foot = []
-  for (let i = 0; i < FOOT_N; i++) foot.push(new THREE.Vector4())
+  const footC = []
+  for (let i = 0; i < FOOT_N; i++) {
+    foot.push(new THREE.Vector4())
+    footC.push(new THREE.Vector3())
+  }
   return new THREE.ShaderMaterial({
     vertexShader: FLOOR_VERT,
     fragmentShader: FLOOR_FRAG,
@@ -448,16 +514,19 @@ export function createFloorMaterial(world, reflector) {
       uReflMat: { value: reflector.textureMatrix },
       uFoot: { value: foot },
       uFootK: { value: new Array(FOOT_N).fill(0) },
+      uFootC: { value: footC },
       uFootHalf: { value: 0.2 },
+      uPostFoot: { value: new THREE.Vector4() },
+      uDbg: { value: 0 },
     },
   })
 }
 
-export function createPropMaterial(world, kind) {
+export function createPostMaterial(world, width) {
   const m = new THREE.ShaderMaterial({
     vertexShader: SURF_VERT,
-    fragmentShader: PROP_FRAG,
-    uniforms: { ...world, uKind: { value: kind }, uSway: { value: 0 } },
+    fragmentShader: POST_FRAG,
+    uniforms: { ...world, uTheta: { value: 0.5 }, uW: { value: width } },
     transparent: true,
     depthWrite: false,
   })

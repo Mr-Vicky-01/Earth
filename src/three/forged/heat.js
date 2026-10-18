@@ -9,12 +9,13 @@
 // t, linear r, g, b
 export const RAMP = [
   [0.0, 0, 0, 0],
-  [0.06, 0.1, 0.004, 0],
+  [0.04, 0, 0, 0],
+  [0.08, 0.1, 0.004, 0],
   [0.15, 0.4, 0.02, 0.004],
   [0.35, 0.95, 0.07, 0.012],
-  [0.55, 1.0, 0.2, 0.03],
-  [0.75, 1.0, 0.5, 0.1],
-  [1.0, 1.0, 0.86, 0.62],
+  [0.55, 1.0, 0.24, 0.03],
+  [0.75, 1.0, 0.6, 0.07],
+  [1.0, 1.0, 0.92, 0.72],
 ]
 
 // heat → °C (below ≈420 °C steel shows no glow, so the first visible stop starts there)
@@ -61,13 +62,13 @@ export const AMBIENT_C = 21
 export const SLAM_C = 1320 // the letters arrive at white heat
 /**
  * Cooling of the stock, in °C per second: radiation (T⁴, dominant while it glows, so white → orange is quick)
- * plus convection (Newton, the long slow tail through the reds). Fitted to: orange ≈ 0.5 s, cherry ≈ 1 s,
- * dull red ≈ 1.8 s, black heat ≈ 2.6 s.
+ * plus convection (Newton, the slower tail through the reds). Fitted to: orange ≈ 0.4 s, cherry ≈ 0.8 s,
+ * dull red ≈ 1.4 s, black heat ≈ 1.9 s.
  */
 export function coolRate(c) {
   const k = c + 273
   const a = AMBIENT_C + 273
-  return (-0.5 * (k * k * k * k - a * a * a * a)) / 4.0425e9 - 0.25 * (c - AMBIENT_C)
+  return (-0.5 * (k * k * k * k - a * a * a * a)) / 4.0425e9 - 0.4 * (c - AMBIENT_C)
 }
 
 /** Writes the linear blackbody colour for heat t into out[0..2]; returns out. */
@@ -79,8 +80,15 @@ export function blackbody(t, out) {
   return out
 }
 
+const sstep = (a, b, x) => {
+  const t = Math.min(Math.max((x - a) / (b - a), 0), 1)
+  return t * t * (3 - 2 * t)
+}
 /** Emission gain for heat t (matches hfHeatGain in GLSL). */
-export const heatGain = (t) => 0.25 + 3.3 * Math.pow(Math.max(t, 0), 2.3)
+export const heatGain = (t) => {
+  const b = sstep(0.55, 1, t)
+  return 0.3 + 0.95 * sstep(0.08, 0.55, t) + 1.75 * b * Math.sqrt(b)
+}
 
 const toSrgb = (v) => {
   const x = Math.min(Math.max(v, 0), 1)

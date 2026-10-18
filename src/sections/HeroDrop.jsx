@@ -167,12 +167,19 @@ export function HeroDrop({ ready }) {
     () => {
       if (reduced) return
       const items = gsap.utils.toArray('[data-pull]', root.current)
+      const scrim = root.current.querySelector('.hd-copy')
       const pullIn = (delay = 0) => {
         if (htmlIn.current) return
         htmlIn.current = true
         gsap.fromTo(items, PULL_FROM, { ...PULL_TO, delay })
+        // the ink scrim behind the copy comes up with it (in the dark before the slam it would show as a panel);
+        // the variable lives on the copy block itself, so only that small subtree restyles
+        gsap.to(scrim, { '--hd-scrim': 1, duration: 0.45, ease: 'power2.out', delay })
       }
-      if (!htmlIn.current) gsap.set(items, PULL_FROM)
+      if (!htmlIn.current) {
+        gsap.set(items, PULL_FROM)
+        gsap.set(scrim, { '--hd-scrim': 0 })
+      }
       if (!go) return
 
       // page entered without the canvas: copy comes in now, the scene plays its own drop when it arrives
@@ -187,6 +194,8 @@ export function HeroDrop({ ready }) {
         flashRead()
       }
       startEntrance(rig)
+      // dev-only: ?dd=skip fast-forwards the entrance (look iteration in the capture tools)
+      if (import.meta.env.DEV && /[?&]dd=[^&]*skip/.test(location.search)) for (let i = 0; i < 240; i++) stepRig(rig, 1 / 60)
       // safety: never leave the copy waiting on the physics
       gsap.delayedCall(1.6, () => pullIn(0))
     },

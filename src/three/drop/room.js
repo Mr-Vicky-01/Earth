@@ -40,6 +40,10 @@ export function wallMaterial({ block, headline, noise }) {
     uHeadW: { value: 1 },
     uHeadH: { value: 1 },
     uNoise: { value: noise },
+    // two dim far fixtures beyond the frame edges (they light the dark corners)
+    uWallN: { value: new THREE.Vector3(0, 0, 1) },
+    uGlowP: { value: [new THREE.Vector3(0, -50, 0), new THREE.Vector3(0, -50, 0)] },
+    uGlowC: { value: [new THREE.Color(0, 0, 0), new THREE.Color(0, 0, 0)] },
   }
   m.userData.u = u
   m.onBeforeCompile = (s) => {
@@ -57,7 +61,20 @@ uniform vec3 uHeadR;
 uniform float uHeadW;
 uniform float uHeadH;
 uniform sampler2D uNoise;
+uniform vec3 uWallN;
+uniform vec3 uGlowP[2];
+uniform vec3 uGlowC[2];
 varying vec3 vDropW;`,
+      )
+      .replace(
+        '#include <emissivemap_fragment>',
+        `#include <emissivemap_fragment>
+// diffuse light from the two off-frame sources (inverse square, Lambert; softened by their size)
+for ( int i = 0; i < 2; i++ ) {
+  vec3 d = uGlowP[i] - vDropW;
+  float r2 = dot( d, d );
+  totalEmissiveRadiance += diffuseColor.rgb * uGlowC[i] * max( dot( uWallN, d ) * inversesqrt( r2 ), 0.0 ) / ( r2 + 0.08 );
+}`,
       )
       .replace(
         '#include <map_fragment>',
@@ -77,7 +94,7 @@ diffuseColor.rgb *= ( 0.86 + 0.28 * dropNA.r ) * ( 1.0 - dropGrime ) * ( 1.0 - 0
 float dropChalk = smoothstep( 0.76, 0.86, dropNA.a ) * smoothstep( 0.85, 1.1, vDropW.y ) * ( 1.0 - smoothstep( 1.5, 1.9, vDropW.y ) );
 diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.42 ), dropChalk * 0.22 );
 // the headline is paint on the same blocks: it runs into the joints (cavity AO) and wears with the wall
-vec3 dropPaint = dropHead.rgb * ( 0.5 + 0.5 * dropCav ) * ( 1.0 - 0.55 * dropGrime ) * ( 1.0 - 0.3 * dropScuff );
+vec3 dropPaint = dropHead.rgb * ( 0.62 + 0.38 * dropCav ) * ( 1.0 - 0.55 * dropGrime ) * ( 1.0 - 0.3 * dropScuff );
 diffuseColor.rgb = mix( diffuseColor.rgb, dropPaint, dropHead.a );`,
       )
       .replace(
@@ -140,9 +157,9 @@ roughnessFactor = mix( roughnessFactor, 0.95, dropDust * 0.5 );`,
 /* ------------------------------------------------------------------ */
 export function roomMaterials(envIntensity = 0.15) {
   return {
-    powder: new THREE.MeshStandardMaterial({ color: '#1e2025', roughness: 0.48, metalness: 0.15, envMapIntensity: envIntensity }),
-    rubber: new THREE.MeshStandardMaterial({ color: '#161619', roughness: 0.72, envMapIntensity: envIntensity * 0.6 }),
-    hub: new THREE.MeshStandardMaterial({ color: '#b8bbc4', roughness: 0.32, metalness: 1, envMapIntensity: 0.5 }),
+    powder: new THREE.MeshStandardMaterial({ color: '#2a2c33', roughness: 0.4, metalness: 0.2, envMapIntensity: envIntensity * 2 }),
+    kitRubber: new THREE.MeshStandardMaterial({ color: '#161619', roughness: 0.72, envMapIntensity: envIntensity * 0.6 }),
+    kitHub: new THREE.MeshStandardMaterial({ color: '#55585f', roughness: 0.62, metalness: 1, envMapIntensity: 0.08 }),
     iron: new THREE.MeshStandardMaterial({ color: '#1a1a1d', roughness: 0.52, metalness: 0.3, envMapIntensity: envIntensity }),
     ball: new THREE.MeshStandardMaterial({ color: '#26272c', roughness: 0.82, envMapIntensity: envIntensity * 0.5 }),
     cove: new THREE.MeshStandardMaterial({ color: '#0e0e11', roughness: 0.45, envMapIntensity: envIntensity }),
@@ -196,7 +213,8 @@ function plateAt(spec, x, y, z, tilt = 0) {
  */
 export function roomProps() {
   const pieces = []
-  const add = (name, side, footprint, parts) => pieces.push({ name, side, footprint, parts })
+  const add = (name, side, footprint, parts) =>
+    pieces.push({ name, side, footprint, parts: [...parts, { mat: 'kitAo', geo: aoBlob(footprint[0], footprint[1], footprint[3]), ao: true }] })
   const PLATE = PLATES[1] // 450 mm bumper
 
   // plate tree (right of the type): a post with two horns toward the room, a 20 and a 15 face-on
@@ -207,8 +225,8 @@ export function roomProps() {
     const p2 = plateAt({ ...PLATE, R: 0.2, t: 0.045 }, 0, 0.82, 0.08)
     add('tree', 'right', [-0.24, 0.24, 1.22, 0.5], [
       { mat: 'powder', geo: merge([...post, ...horns]) },
-      { mat: 'rubber', geo: merge([p1.rubber, p2.rubber]) },
-      { mat: 'hub', geo: merge([p1.hub, p2.hub]) },
+      { mat: 'kitRubber', geo: merge([p1.rubber, p2.rubber]) },
+      { mat: 'kitHub', geo: merge([p1.hub, p2.hub]) },
     ])
   }
   // rig: two bays of uprights off the wall, crossmembers, a pull-up bar, J-cups
@@ -227,14 +245,15 @@ export function roomProps() {
   {
     const r = []
     const h = []
-    ;[0.07, 0.135, 0.2].forEach((z, i) => {
-      const p = plateAt({ ...PLATE }, i * 0.012, PLATE.R + 0.002, z, 0.2 - i * 0.03)
+    ;[0.1, 0.165, 0.23].forEach((z, i) => {
+      const tilt = 0.2 - i * 0.03
+      const p = plateAt({ ...PLATE }, i * 0.012, PLATE.R * Math.cos(tilt) + 0.002, z, tilt)
       r.push(p.rubber)
       h.push(p.hub)
     })
     add('lean', 'left', [-0.23, 0.25, 0.46, 0.28], [
-      { mat: 'rubber', geo: merge(r) },
-      { mat: 'hub', geo: merge(h) },
+      { mat: 'kitRubber', geo: merge(r) },
+      { mat: 'kitHub', geo: merge(h) },
     ])
   }
   // med ball
@@ -259,30 +278,42 @@ export function roomProps() {
   return pieces
 }
 
-/** Where each piece goes for this framing, and whether it stays clear of the letters (as seen from the camera). */
+/**
+ * Where each piece goes for this framing, and whether it may show (as seen from the camera). Low kit may stand in
+ * front of the paint and cover the feet of the letters (up to 15 % of a line's height), the way a real gym's kit
+ * sits against a painted wall; anything taller that would cover a letter stays out. The rig stands at the right
+ * edge of the frame, partly out of it. `view`: the visible wall span (frame.js wallView).
+ */
 export function layoutProps(pieces, f, type, camPos) {
   const left = -f.typeWidth / 2
   const typeU0 = f.typeCenter.clone().sub(f.wallPoint).dot(f.right) + left
   const typeU1 = typeU0 + f.typeWidth
   const top = f.typeCenter.y + f.typeHeight / 2
-  const rects = type.lines.map((ln) => ({
-    u0: typeU0 + ln.x0 * f.typeWidth - 0.03,
-    u1: typeU0 + ln.x1 * f.typeWidth + 0.03,
-    y0: top - ln.b * f.typeHeight - 0.03,
-    y1: top - ln.t * f.typeHeight + 0.03,
-  }))
+  const rects = type.lines.map((ln) => {
+    const y0 = top - ln.b * f.typeHeight
+    const y1 = top - ln.t * f.typeHeight
+    return {
+      u0: typeU0 + ln.x0 * f.typeWidth - 0.03,
+      u1: typeU0 + ln.x1 * f.typeWidth + 0.03,
+      y0: y0 + 0.15 * (y1 - y0),
+      y1: y1 + 0.03,
+    }
+  })
   // the camera, in wall coordinates, to project a piece standing off the wall back onto it
   const rel = camPos.clone().sub(f.wallPoint)
   const cu = rel.dot(f.right)
   const cd = rel.dot(f.n)
   const cy = camPos.y
+  const view = f.wallView || { u0: typeU0 - 1, u1: typeU1 + 1 }
   const anchors = {
     tree: typeU1 + 0.34,
-    rig: typeU1 + 1.0,
+    rig: Math.max(typeU1 + 0.25, view.u1 - 0.42),
     lean: typeU0 + 0.36,
     ball: typeU0 + 0.78,
     kettlebells: typeU0 + 1.08,
   }
+  // the tree only if it fits between the type and the rig
+  if (anchors.rig - anchors.tree < 0.55) anchors.tree = anchors.rig - 0.62
   return pieces.map((p) => {
     const u = anchors[p.name]
     const [x0, x1, hgt, dep] = p.footprint
@@ -294,6 +325,16 @@ export function layoutProps(pieces, f, type, camPos) {
     return { u, visible: !hits }
   })
 }
+
+/** A soft contact-shadow blob for a piece of kit: a floor quad in wall-local space. */
+export function aoBlob(x0, x1, depth) {
+  const w = x1 - x0 + 0.16
+  const d = depth + 0.14
+  const g = new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2)
+  g.translate((x0 + x1) / 2, 0.0015, d / 2 - 0.02)
+  return g
+}
+
 
 /* ------------------------------------------------------------------ */
 /* Ceiling: deck, steel joists running out from the wall, a duct.      */

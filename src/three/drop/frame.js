@@ -1,5 +1,7 @@
 import * as THREE from 'three'
-import { PLATE_R } from './sim.js'
+import { PLATE_R, LIFT_MAX, followFor } from './sim.js'
+
+export { LIFT_MAX, followFor }
 
 /**
  * Framing for THE DROP, shared by the scene (render camera), the section (pointer → lift mapping) and the node
@@ -29,11 +31,12 @@ export const STACK = (() => {
 })()
 
 export const DOLLY_BACK = 0.38 // entrance: the camera starts this far back and snaps in with the slam
-const PULL = 0.3 // crane follow also eases the camera back a little
+const K_MIN = 0.56 // the operator may zoom out to this share of the resting focal length to frame a lift
 const LEAN_X = 0.11
 const LEAN_Y = 0.03
-const FOLLOW_Y0 = 0.22 // no camera follow for small lifts and bounces
-export const LIFT_MAX = 1.0 // m: drag and power-clean ceiling (bar axis above its resting height)
+const CLEAN_OPEN = 0.93 // share of the zoom-out the camera has reached by the clean's apex (see sim.js)
+/** Plate tops never rise above this (px): clear of the nav zone and of the tag / readout row. */
+export const topLimit = (B, h) => Math.max(100, B.top + 0.012 * h)
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v)
 const lerp = (a, b, t) => a + (b - a) * t
@@ -114,31 +117,31 @@ export function headlineLayout(lines, layout, cap, { W = 2304, align = ['left', 
 /* ------------------------------------------------------------------ */
 /* Camera pose (shared by render + pointer mapping)                    */
 /* ------------------------------------------------------------------ */
-/** Camera-follow amount (m) for a lift `y`: none for small lifts, then a soft crane that saturates the bar's
- *  on-screen rise, so 1 m of lift stays in frame. Exactly 0 at y ≤ FOLLOW_Y0 (bounces never move the camera). */
-export function followFor(y, f) {
-  if (!f || !(f.followT > 0) || !Number.isFinite(f.followT)) return 0
-  const u = y - FOLLOW_Y0
-  if (u <= 0) return 0
-  const T = f.followT
-  return u - T * (1 - Math.exp(-u / T))
-}
-
 /**
- * Base pose: resting framing + entrance push-back + crane follow + pointer lean. Writes P (position) and L
+ * Base pose: resting framing + entrance push-back + lift framing + pointer lean. Writes P (position) and L
  * (look-at); returns the fov. s = { dolly, follow, px, py, lean }.
+ *
+ * `follow` (0..1) opens the shot for a lift like an operator on a tripod with a zoom: the lens zooms out to
+ * f.kMin of its focal length while the head tilts up just enough to keep the platform (where the plates land)
+ * where it was on screen. So a lifted bar fits under the top row, and when it is let go the camera can simply hold
+ * the frame: the fall and the slam happen inside it, and the camera eases back in afterwards.
  */
 export function poseCamera(f, s, P, L) {
   P.copy(f.pos)
   L.copy(f.target)
+  P.addScaledVector(f.dir, (1 - s.dolly) * DOLLY_BACK)
+  let fov = f.fov + (1 - s.dolly) * 2
   const ph = s.follow || 0
-  P.addScaledVector(f.dir, (1 - s.dolly) * DOLLY_BACK + ph * PULL)
-  P.y += ph
-  L.y += ph
+  if (ph > 0 && f.kMin < 1) {
+    const k = 1 - (1 - f.kMin) * ph
+    fov = (2 * Math.atan(Math.tan((fov * Math.PI) / 360) / k) * 180) / Math.PI
+    const a = ((1 - k) * (f.contactY - f.ppY) * (f.tiltK ?? 1)) / (k * f.fpx)
+    L.y += f.dist * Math.tan(a)
+  }
   const lean = s.lean ?? 1
   P.x += (s.px || 0) * LEAN_X * lean
   P.y -= (s.py || 0) * LEAN_Y * lean
-  return f.fov + (1 - s.dolly) * 2
+  return fov
 }
 
 /** Apply a pose to a PerspectiveCamera (with the framing's view offset). */
@@ -387,12 +390,12 @@ export function solveFrame(w, h, type, band) {
     typeWidth: pl.width,
     typeHeight: pl.height,
     typeRect: { x: tl, y: tt, w: tw, h: tw / type.aspect },
-    followT: Infinity,
+    followTab: null,
+    kMin: 1,
     maxLift: LIFT_MAX,
     cleanTop: LIFT_MAX,
     maxLiftStill: LIFT_MAX,
     restY: 0,
-    topY: 0,
     w,
     h,
   }
@@ -407,39 +410,174 @@ export function solveFrame(w, h, type, band) {
   // lift at which the plates' lowest point sits just above the top edge: the fall is seen from its first cm
   f.dropFrom = frameTop + 0.035
 
-  // 5. lift range: how high the bar centre may go on screen, and the crane-follow that keeps 1 m inside it
-  const topY = Math.max(p.top * h, B.top - 0.02 * h)
-  const barY = (lift, follow) => {
-    applyPose(cam, f, { dolly: 1, follow }, w, h, _P, _L)
-    return toPx(_v.set(0, PLATE_R + lift, 0), w, h, o).y
+  // 5. lift range: the plate tops stay below topLimit (clear of the nav and the tag / readout row). Without the
+  // zoom (reduced motion) that is the most the bar may rise. With it: the least zoom-out that frames a full lift
+  // (never wider than K_MIN), and a table of how far the shot opens for each lift (the sim's crane spring runs
+  // toward it)
+  const lim = topLimit(B, h)
+  f.topLimit = lim
+  {
+    applyPose(cam, f, { dolly: 1, follow: 0 }, w, h, _P, _L)
+    f.ppY = toPx(f.target, w, h, o).y
+    let lowest = -Infinity
+    for (const p of BAR_PTS) lowest = Math.max(lowest, toPx(p, w, h, o).y)
+    f.contactY = lowest
+    f.fpx = h / 2 / Math.tan((p.fov * Math.PI) / 360)
+    f.dist = pos.distanceTo(T)
   }
-  f.restY = barY(0, 0)
-  f.topY = topY
-  // without any follow (reduced motion): the highest lift that stays in frame
-  let a = 0
-  let b = LIFT_MAX
-  if (barY(LIFT_MAX, 0) < topY) {
+  f.restY = barTopAt(f, { dolly: 1, follow: 0 }, 0)
+  // the tilt that keeps the plates' floor contact exactly where it was at full zoom-out (the first-order tilt
+  // above is close; this trims it), so a dropped bar always lands in the same place on screen
+  const contactAt = (ph) => {
+    applyPose(cam, f, { dolly: 1, follow: ph }, w, h, _P, _L)
+    let lowest = -Infinity
+    for (const q of BAR_PTS) lowest = Math.max(lowest, toPx(q, w, h, o).y)
+    return lowest
+  }
+  f.kMin = K_MIN
+  f.tiltK = 1
+  {
+    let a = 0.5
+    let b = 1.5
+    for (let i = 0; i < 18; i++) {
+      f.tiltK = (a + b) / 2
+      if (contactAt(1) > f.contactY) b = f.tiltK
+      else a = f.tiltK
+    }
+    f.tiltK = a
+  }
+  const liftFor = (ph) => {
+    const s = { dolly: 1, follow: ph }
+    if (barTopAt(f, s, LIFT_MAX) >= lim) return LIFT_MAX
+    let a = 0
+    let b = LIFT_MAX
     for (let i = 0; i < 20; i++) {
       const m = (a + b) / 2
-      if (barY(m, 0) >= topY) a = m
+      if (barTopAt(f, s, m) >= lim) a = m
       else b = m
     }
-    f.maxLiftStill = a
-    // follow time-constant so that a full lift lands exactly at topY
-    let t0 = 0.02
-    let t1 = 20
-    for (let i = 0; i < 30; i++) {
-      const m = Math.sqrt(t0 * t1)
-      f.followT = m
-      if (barY(LIFT_MAX, followFor(LIFT_MAX, f)) >= topY) t0 = m
-      else t1 = m
+    return a
+  }
+  f.maxLiftStill = liftFor(0)
+  f.maxLift = liftFor(1)
+  if (f.maxLiftStill >= LIFT_MAX) f.kMin = 1
+  else if (f.maxLift >= LIFT_MAX) {
+    // zoom out no further than a full lift needs
+    let a = K_MIN
+    let b = 1
+    for (let i = 0; i < 20; i++) {
+      const m = (a + b) / 2
+      f.kMin = m
+      if (liftFor(1) >= LIFT_MAX) a = m
+      else b = m
     }
-    f.followT = t0
+    f.kMin = a
+    f.maxLift = LIFT_MAX
+  }
+  // how far the shot opens for a lift y: just enough to keep the plates 10 px under the limit, eased in from the
+  // first ~20 cm so the zoom starts gently instead of when the plates touch the limit
+  const N = 32
+  const tab = new Float32Array(N + 1)
+  const y0 = Math.min(0.2, f.maxLiftStill * 0.6)
+  for (let i = 0; i <= N; i++) {
+    const y = (f.maxLift * i) / N
+    let need = 0
+    if (f.kMin < 1 && barTopAt(f, { dolly: 1, follow: 0 }, y) < lim + 10) {
+      let a = 0
+      let b = 1
+      for (let k = 0; k < 18; k++) {
+        const m = (a + b) / 2
+        if (barTopAt(f, { dolly: 1, follow: m }, y) >= lim + 10) b = m
+        else a = m
+      }
+      need = b
+    }
+    const u = f.maxLift > y0 ? clamp((y - y0) / (f.maxLift - y0), 0, 1) : 0
+    tab[i] = f.kMin < 1 ? Math.min(1, Math.max(need, u * u * (3 - 2 * u))) : 0
+  }
+  f.followTab = tab
+  // the clean is fast: the camera has opened CLEAN_OPEN of the way by its apex
+  {
+    const s = { dolly: 1, follow: CLEAN_OPEN }
+    let a = 0
+    let b = f.maxLift
+    if (barTopAt(f, s, b) >= lim) a = b
+    else
+      for (let i = 0; i < 20; i++) {
+        const m = (a + b) / 2
+        if (barTopAt(f, s, m) >= lim) a = m
+        else b = m
+      }
+    f.cleanTop = f.kMin < 1 ? a : f.maxLift
+  }
+  // the visible span of the wall at rest (wall-local u along `right` from wallPoint, world y at the top edge)
+  {
+    applyPose(cam, f, { dolly: 1, follow: 0 }, w, h, _P, _L)
+    const q = new THREE.Vector3()
+    const uAt = (sx, sy) => (rayAt(sx, sy, w, h).intersectPlane(wallPlane, q) ? q.clone().sub(wallPoint).dot(right) : 0)
+    f.wallView = { u0: uAt(0, h * 0.5), u1: uAt(w, h * 0.5), yTop: rayAt(w, 0, w, h).intersectPlane(wallPlane, q) ? q.y : 3 }
   }
   // debug / tooling: the parts of the composition the solver reasoned about
   f.debug = { env, stacks, clear, margin, band: B, preset: p }
   cam.clearViewOffset()
   return f
+}
+
+
+/* Plate-top silhouette points (the top arc of every rim), for the lift limits. */
+const TOP_PTS = (() => {
+  const pts = []
+  for (const side of [-1, 1]) {
+    for (const p of STACK) {
+      for (const dx of [-p.t / 2, p.t / 2]) {
+        for (let i = -4; i <= 4; i++) {
+          const a = (i / 4) * 0.7
+          pts.push(new THREE.Vector3(side * (p.x + dx), Math.cos(a) * p.R, Math.sin(a) * p.R))
+        }
+      }
+    }
+  }
+  return pts
+})()
+const _q = new THREE.Vector3()
+
+/** Highest screen point (px, smallest y) of the plates at `lift`, bar plane z, for the pose `s`. */
+export function barTopAt(f, s, lift, z = 0) {
+  const { w, h } = f
+  applyPose(cam, f, s, w, h, _P, _L)
+  let top = Infinity
+  for (const p of TOP_PTS) {
+    _q.set(p.x, p.y + PLATE_R + lift, p.z + z).project(cam)
+    const y = ((1 - _q.y) / 2) * h
+    if (y < top) top = y
+  }
+  cam.clearViewOffset()
+  return top
+}
+
+/** Lowest screen point (px) of the plates resting on the floor, for the pose `s` (tooling). */
+export function contactAt(f, s) {
+  const { w, h } = f
+  applyPose(cam, f, s, w, h, _P, _L)
+  let lowest = -Infinity
+  const o = { x: 0, y: 0 }
+  for (const q of BAR_PTS) lowest = Math.max(lowest, toPx(q, w, h, o).y)
+  cam.clearViewOffset()
+  return lowest
+}
+
+/** The highest lift whose plate tops stay below f.topLimit with the camera where it is now (pose `s`). */
+export function liftCap(f, s, z = 0, hi = LIFT_MAX) {
+  if (!f || !(f.topLimit > 0)) return hi
+  if (barTopAt(f, s, hi, z) >= f.topLimit) return hi
+  let a = 0
+  let b = hi
+  for (let i = 0; i < 14; i++) {
+    const m = (a + b) / 2
+    if (barTopAt(f, s, m, z) >= f.topLimit) a = m
+    else b = m
+  }
+  return a
 }
 
 /**

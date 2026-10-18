@@ -12,19 +12,25 @@ import './hero-forged.css'
 const ForgedScene = lazy(() => import('../three/forged/ForgedScene.jsx').then((m) => ({ default: m.ForgedScene })))
 
 const SCENE_WAIT = 1200 // ms after `ready` that the page waits for the canvas before entering without it
-const COPY_DELAY = 1250 // ms after the first slam: the word is passing through orange
+const COPY_FALLBACK = 2.4 // s: the scene cues the copy itself (as the word passes orange, ≈ 0.9 s); this is a net
 const PULL_FROM = { x: -110, skewX: -26, scaleX: 1.45, opacity: 0, transformOrigin: '0% 50%' }
 const PULL_TO = { x: 0, skewX: 0, scaleX: 1, opacity: 1, duration: 0.8, ease: 'expo.out', stagger: 0.032 }
 const fmt = new Intl.NumberFormat('en-US')
 
-/** No WebGL: the word set in big satin type over a forge glow, with its reflection. */
-function ForgedFallback() {
+/** No WebGL: the word set in big satin type in the dark workshop: brick lit by the forge, an iron floor. */
+function ForgedFallback({ onShow }) {
+  // without a canvas there is nothing to wait for: the copy comes in at once
+  useEffect(() => {
+    onShow?.()
+  }, [onShow])
   return (
     <div className="hf-fb" aria-hidden="true">
+      <div className="hf-fb-wall" />
+      <div className="hf-fb-floor" />
       <div className="hf-fb-glow" />
       <div className="hf-fb-word d">Forge</div>
       <div className="hf-fb-word hf-fb-mirror d">Forge</div>
-      <div className="hf-fb-floor" />
+      <div className="hf-fb-haze" />
     </div>
   )
 }
@@ -87,13 +93,16 @@ export function HeroForged({ ready }) {
     drawn.current = true
   }, [])
   const [waited, setWaited] = useState(false)
+  const onFallback = useCallback(() => setWaited(true), [])
+  // timers run on the GSAP ticker (the page's frame clock), so they pause with the page and stay in step with
+  // the scene's own frames
   useEffect(() => {
     if (!ready || sceneLive || reduced) return
-    let id = setTimeout(() => {
+    let call = gsap.delayedCall(SCENE_WAIT / 1000, () => {
       if (!drawn.current) setWaited(true)
-      else id = setTimeout(() => setWaited(true), SCENE_WAIT * 2)
-    }, SCENE_WAIT)
-    return () => clearTimeout(id)
+      else call = gsap.delayedCall((SCENE_WAIT * 2) / 1000, () => setWaited(true))
+    })
+    return () => call.kill()
   }, [ready, sceneLive, reduced])
   const go = ready && (reduced || sceneLive || waited)
   useEffect(() => {
@@ -111,10 +120,9 @@ export function HeroForged({ ready }) {
     // the scene calls onCopy as the word passes through orange; the timer is only a fallback
     const m = motion.current
     m.onCopy = () => setCopyIn(true)
-    const dbgStep = import.meta.env.DEV && m.dbgStep
-    const id = dbgStep ? 0 : setTimeout(() => setCopyIn(true), sceneLive ? COPY_DELAY + 1500 : 120)
+    const call = gsap.delayedCall(sceneLive ? COPY_FALLBACK : 0.12, () => setCopyIn(true))
     return () => {
-      clearTimeout(id)
+      call.kill()
       m.onCopy = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -162,8 +170,9 @@ export function HeroForged({ ready }) {
         // 0.1 on phones), so text never crosses hot steel
         .fromTo(ui.current, { y: 0 }, { y: () => -0.42 * window.innerHeight, duration: 1 }, 0)
         .fromTo(ui.current, { opacity: 1 }, { opacity: 0, duration: 0.1, ease: 'power1.in' }, 0)
-        // the tag and readout leave before they could slide under the fixed nav
-        .fromTo(top.current, { opacity: 1 }, { opacity: 0, duration: 0.035, ease: 'power1.in' }, 0)
+        // the tag and readout leave before they slide far under the fixed nav (which hides as the page scrolls
+        // down), eased in and out over the first ~7% so the first wheel notch never pops them
+        .fromTo(top.current, { opacity: 1 }, { opacity: 0, duration: 0.07, ease: 'power2.inOut' }, 0)
         // past the forge mouth: a clean cut to black before the next section's wedge takes the frame
         .fromTo(cut.current, { opacity: 0 }, { opacity: 1, duration: 0.07, ease: 'power2.in' }, 0.63)
     },
@@ -360,7 +369,7 @@ export function HeroForged({ ready }) {
   return (
     <section id="top" ref={root} className="sec s-ink hf" aria-labelledby="hf-title">
       <div ref={stage} className="hf-stage" aria-hidden="true">
-        <SceneBoundary fallback={<ForgedFallback />}>
+        <SceneBoundary fallback={<ForgedFallback onShow={onFallback} />}>
           <Suspense fallback={null}>
             <ForgedScene
               motion={motion.current}

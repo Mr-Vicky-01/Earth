@@ -215,14 +215,45 @@
     transform: scale(0.95);
   }
 
-  /* ---------- static fallback (no WebGL) ---------- */
+  /* ---------- static fallback (no WebGL): the word in the dark workshop ---------- */
   .hf-fb {
     position: absolute;
     inset: 0;
     overflow: hidden;
-    background: var(--color-ink);
+    background: #0b0a0c;
     --fb-mid: calc(var(--hf-band-top, 140px) + var(--hf-band-h, 420px) * 0.5);
     --fb-size: min(18.4vw, calc(var(--hf-band-h, 420px) * 0.52));
+    --fb-floor: calc(var(--fb-mid) + var(--fb-size) * 0.37);
+  }
+  /* soot-stained brick, out of focus, lit warm from the forge off to the left and fading into the dark */
+  .hf-fb-wall {
+    position: absolute;
+    left: -2%;
+    right: -2%;
+    top: -2%;
+    height: calc(var(--fb-floor) + 2%);
+    background-image:
+      linear-gradient(90deg, rgb(255 120 50 / 0.2), rgb(255 90 30 / 0.06) 32%, transparent 55%),
+      linear-gradient(180deg, rgb(8 7 8 / 0.82), rgb(8 7 8 / 0.3) 55%, rgb(8 7 8 / 0.55)),
+      linear-gradient(90deg, transparent 30%, rgb(8 7 8 / 0.72) 75%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='60'%3E%3Crect width='180' height='60' fill='%23141112'/%3E%3Cg fill='%23301a14'%3E%3Crect x='1' y='1' width='43' height='13'/%3E%3Crect x='46' y='1' width='43' height='13' fill='%23281611'/%3E%3Crect x='91' y='1' width='43' height='13' fill='%23361d15'/%3E%3Crect x='136' y='1' width='43' height='13' fill='%231d1210'/%3E%3Crect x='-21' y='16' width='43' height='13' fill='%23361d15'/%3E%3Crect x='24' y='16' width='43' height='13'/%3E%3Crect x='69' y='16' width='43' height='13' fill='%23251410'/%3E%3Crect x='114' y='16' width='43' height='13' fill='%23331b14'/%3E%3Crect x='159' y='16' width='43' height='13' fill='%23361d15'/%3E%3Crect x='1' y='31' width='43' height='13' fill='%23241411'/%3E%3Crect x='46' y='31' width='43' height='13' fill='%23341c15'/%3E%3Crect x='91' y='31' width='43' height='13'/%3E%3Crect x='136' y='31' width='43' height='13' fill='%232c1813'/%3E%3Crect x='-21' y='46' width='43' height='13'/%3E%3Crect x='24' y='46' width='43' height='13' fill='%231c110f'/%3E%3Crect x='69' y='46' width='43' height='13' fill='%23361d15'/%3E%3Crect x='114' y='46' width='43' height='13' fill='%232a1712'/%3E%3Crect x='159' y='46' width='43' height='13'/%3E%3C/g%3E%3C/svg%3E");
+    background-size:
+      auto,
+      auto,
+      auto,
+      108px 36px;
+    filter: blur(1.3px) saturate(0.9);
+  }
+  .hf-fb-floor {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: var(--fb-floor);
+    bottom: 0;
+    background:
+      radial-gradient(120% 60% at 0% 0%, rgb(255 100 40 / 0.12), transparent 60%),
+      linear-gradient(180deg, #19161a 0%, #0f0e10 30%, #09090b 100%);
+    box-shadow: 0 -1px 0 rgb(0 0 0 / 0.6);
   }
   .hf-fb-glow {
     position: absolute;
@@ -231,7 +262,7 @@
     width: 92vw;
     height: calc(var(--fb-size) * 2.6);
     transform: translate(-50%, -50%);
-    background: radial-gradient(closest-side, rgb(255 75 31 / 0.3), rgb(255 75 31 / 0.08) 55%, transparent);
+    background: radial-gradient(closest-side, rgb(255 75 31 / 0.16), rgb(255 75 31 / 0.05) 55%, transparent);
   }
   .hf-fb-word {
     --w: 125;
@@ -248,19 +279,18 @@
     -webkit-background-clip: text;
     background-clip: text;
   }
+  /* a rough iron floor: the reflection is soft and gone within half a letter */
   .hf-fb-mirror {
     transform: translateY(calc(-50% + var(--fb-size) * 0.79)) scaleY(-1);
-    opacity: 0.16;
-    -webkit-mask-image: linear-gradient(0deg, #000 10%, transparent 55%);
-    mask-image: linear-gradient(0deg, #000 10%, transparent 55%);
+    opacity: 0.12;
+    filter: blur(5px);
+    -webkit-mask-image: linear-gradient(0deg, #000 25%, transparent 60%);
+    mask-image: linear-gradient(0deg, #000 25%, transparent 60%);
   }
-  .hf-fb-floor {
+  .hf-fb-haze {
     position: absolute;
-    left: 0;
-    right: 0;
-    top: calc(var(--fb-mid) + var(--fb-size) * 0.4);
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgb(239 238 233 / 0.16), transparent);
+    inset: 0;
+    background: radial-gradient(70% 50% at 50% calc(var(--fb-mid) - 4%), rgb(120 110 110 / 0.05), transparent 70%);
   }
 
   @media (max-width: 1120px) and (min-width: 861px) {

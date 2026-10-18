@@ -245,8 +245,9 @@ function* headlineSteps(count, res, seed, variant) {
       z = 0.03 * rand()
     }
     const lambert = nx * Lx + ny * Ly
-    // raking key light: the rounded shoulders of each stroke facing it flare, the far shoulders fall into shadow
-    let shade = 1 + 0.95 * lambert * Math.pow(edgeness, 0.8) + 0.04 * inner
+    // raking key light: the rounded shoulders of each stroke facing it flare, the far shoulders dim a little (the
+    // deep shadow of the contour is carried by the walls; on the face a grain that dark reads as a speck of dirt)
+    let shade = 1 + (lambert > 0 ? 0.8 : 0.42) * lambert * Math.pow(edgeness, 1.1) + 0.04 * inner
     shade *= gradeAt(px, py)
     // the tooth of the chalk: soft patches a little brighter or duller, never holes
     shade *= 0.9 + 0.2 * mottle(px * 1.7 + 31, py * 1.7 - 17)
@@ -254,16 +255,17 @@ function* headlineSteps(count, res, seed, variant) {
     X[i] = (px - cx) / res
     Y[i] = -(py - cy) / res
     Z[i] = z
-    SH[i] = clamp(shade, 0.25, 1.24)
+    SH[i] = clamp(shade, 0.55, 1.24)
     ED[i] = edgeness
     DF[i] = 0
   }
   yield
 
-  // back to front within each part (walls, then the face)
+  // the walls back to front; the face (a thin layer) darkest first, so the bright powder always lies on top and the
+  // shading only shows where it really is, never as a dark grain dropped on a lit face
   const order = new Uint32Array(count)
   order.set(orderBy(Z, 0, nWall, -WALL_DEPTH, 0), 0)
-  order.set(orderBy(Z, nWall, count, 0, 0.03), nWall)
+  order.set(orderBy(SH, nWall, count, 0.5, 1.3), nWall)
   const target = new Float32Array(count * 4)
   const info = new Float32Array(count * 4)
   for (let j = 0; j < count; j++) {
@@ -286,19 +288,19 @@ function* headlineSteps(count, res, seed, variant) {
 /* ------------------------------------------------------------------ */
 
 /**
- * Block-local positions for `count` grains on the surface of the chalk block (xyz), w = the intro time at which
- * the grain leaves the block: `tImpact` for almost all of them; a few are shed earlier and hang in the air as
- * the powder trail of the throw.
+ * Block-local positions for `count` grains on the surface of the chalk block (xyz), w = when the grain leaves the
+ * block, as a fraction of the fall: 1 (the impact) for almost all of them; a few are shed earlier and hang in the
+ * air as the powder trail of the throw.
  */
-export function sampleBlock(count, tImpact, seed = 5) {
-  return drain(blockSteps(count, tImpact, seed))
+export function sampleBlock(count, seed = 5) {
+  return drain(blockSteps(count, seed))
 }
 
-export function sampleBlockAsync(count, tImpact, seed = 5, signal) {
-  return drainAsync(blockSteps(count, tImpact, seed), signal)
+export function sampleBlockAsync(count, seed = 5, signal) {
+  return drainAsync(blockSteps(count, seed), signal)
 }
 
-function* blockSteps(count, tImpact, seed) {
+function* blockSteps(count, seed) {
   const { hx, hy, hz, r } = BLOCK
   const a = hx - r
   const b = hy - r
@@ -367,7 +369,7 @@ function* blockSteps(count, tImpact, seed) {
     out[k + 2] = z
     // ~1 % of the powder is shed during the throw (the sim only lets go of grains on the trailing faces)
     // (late in the throw, when it is fast, so the powder streams after it like a comet tail)
-    out[k + 3] = rand() < 0.013 ? tImpact * (0.6 + 0.36 * rand()) : tImpact
+    out[k + 3] = rand() < 0.013 ? 0.6 + 0.36 * rand() : 1
   }
   return out
 }

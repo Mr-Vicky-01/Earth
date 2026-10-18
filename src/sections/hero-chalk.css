@@ -3,10 +3,9 @@
     height: 100svh;
     min-height: 640px;
     overflow: clip;
-    /* matches the scene's own background, so nothing changes when the canvas arrives */
-    background:
-      radial-gradient(60% 55% at 12% 8%, rgb(140 153 199 / 0.07), transparent 70%),
-      radial-gradient(130% 100% at 50% 50%, #0a0a10 34%, #0b0d22 78%, #0b0e26 100%);
+    /* the gym with its lights still off: the canvas fades in over it from its first frame (lights at a glow),
+       then the lights come up */
+    background: radial-gradient(130% 100% at 50% 45%, #080808 0%, #050505 60%, #020202 100%);
     touch-action: pan-y;
     -webkit-tap-highlight-color: transparent;
   }

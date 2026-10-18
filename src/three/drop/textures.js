@@ -17,6 +17,37 @@ function makeCanvas(w, h) {
   return c
 }
 
+/** Run a builder generator to completion (synchronously). */
+export function runSync(gen) {
+  for (;;) {
+    const r = gen.next()
+    if (r.done) return r.value
+  }
+}
+
+/** Run a builder generator in slices of at most `budget` ms of main-thread time, yielding to the page between. */
+export async function runSliced(gen, budget = 6) {
+  let t = performance.now()
+  for (;;) {
+    const r = gen.next()
+    if (r.done) return r.value
+    if (performance.now() - t > budget) {
+      await nextTask()
+      t = performance.now()
+    }
+  }
+}
+/** Resolve on the next macrotask (lets the page paint and handle input in between). */
+export const nextTask = () =>
+  new Promise((res) => {
+    const ch = new MessageChannel()
+    ch.port1.onmessage = () => {
+      ch.port1.close()
+      res()
+    }
+    ch.port2.postMessage(0)
+  })
+
 /** Small seeded PRNG (mulberry32). */
 export function prng(seed) {
   let a = seed >>> 0
@@ -81,7 +112,7 @@ function finish(tex, { srgb = true, repeat = null, aniso = 8 } = {}) {
 /* ------------------------------------------------------------------ */
 /* Rubber: black EPDM with fine grey granules (platform sides, floor)  */
 /* ------------------------------------------------------------------ */
-export function rubberTextures({ size = 512, seams = false, seed = 7, base = 17 } = {}) {
+export function* rubberTexturesGen({ size = 512, seams = false, seed = 7, base = 17 } = {}) {
   const c = makeCanvas(size, size)
   const ctx = c.getContext('2d')
   const img = ctx.createImageData(size, size)
@@ -93,6 +124,7 @@ export function rubberTextures({ size = 512, seams = false, seed = 7, base = 17 
   const n3 = valueNoise(seed + 2, 64)
   const rnd = prng(seed + 3)
   for (let y = 0; y < size; y++) {
+    if ((y & 7) === 0) yield
     for (let x = 0; x < size; x++) {
       const u = x / size
       const v = y / size
@@ -134,12 +166,14 @@ export function rubberTextures({ size = 512, seams = false, seed = 7, base = 17 
   }
 }
 
+export const rubberTextures = (o) => runSync(rubberTexturesGen(o))
+
 /* ------------------------------------------------------------------ */
 /* Wood centre panel: oak boards front-to-back, satin varnish, FORGE   */
 /* mark painted in front of the bar, chalk where the lifter stands.    */
 /* Canvas top = far edge of the platform (-z), bottom = camera side.   */
 /* ------------------------------------------------------------------ */
-export function woodTextures({ lite = false } = {}) {
+export function* woodTexturesGen({ lite = false } = {}) {
   const W = lite ? 512 : 768
   const H = W * 2
   const c = makeCanvas(W, H)
@@ -152,6 +186,7 @@ export function woodTextures({ lite = false } = {}) {
   rctx.fillStyle = 'rgb(118,118,118)'
   rctx.fillRect(0, 0, W, H)
   for (let p = 0; p < planks; p++) {
+    yield
     const x0 = p * pw
     // a few boards per strip, butt-jointed at staggered lengths
     let y = -rnd() * H * 0.6
@@ -203,6 +238,7 @@ export function woodTextures({ lite = false } = {}) {
     ctx.fillRect(x0 + 1.5, 0, 1, H)
   }
 
+  yield
   // wear: the centre of the board, where lifters stand, is scuffed lighter and rougher
   const wear = ctx.createRadialGradient(W / 2, H * 0.5, 0, W / 2, H * 0.5, W * 0.55)
   wear.addColorStop(0, 'rgba(255,240,215,0.10)')
@@ -264,6 +300,7 @@ export function woodTextures({ lite = false } = {}) {
   rctx.fillStyle = 'rgba(200,200,200,0.5)'
   rctx.fillRect(mx, my - capPx, total, capPx)
 
+  yield
   // chalk: hand prints and foot scuffs behind the bar, a dusting all over
   ctx.save()
   for (let i = 0; i < 26; i++) {
@@ -293,11 +330,13 @@ export function woodTextures({ lite = false } = {}) {
   }
 }
 
+export const woodTextures = (o) => runSync(woodTexturesGen(o))
+
 /* ------------------------------------------------------------------ */
 /* Shaft knurling: map + roughness + normal, u = around, v = along x.  */
 /* ------------------------------------------------------------------ */
 export const SHAFT_HALF = 0.655
-export function knurlTextures({ lite = false } = {}) {
+export function* knurlTexturesGen({ lite = false } = {}) {
   const W = 64
   const H = lite ? 1024 : 2048
   const height = new Float32Array(W * H)
@@ -328,6 +367,7 @@ export function knurlTextures({ lite = false } = {}) {
   const around = 18 // diamonds around the bar
   const pitch = (H / (SHAFT_HALF * 2)) * 0.0042 // texels per diamond along the bar (4.2 mm)
   for (let row = 0; row < H; row++) {
+    if ((row & 63) === 0) yield
     for (let col = 0; col < W; col++) {
       const a = (col / W) * around
       const b = row / pitch
@@ -348,6 +388,7 @@ export function knurlTextures({ lite = false } = {}) {
   const ni = nctx.createImageData(W, H)
   const strength = 2.2
   for (let row = 0; row < H; row++) {
+    if ((row & 63) === 0) yield
     for (let col = 0; col < W; col++) {
       const i = row * W + col
       const h = height[i]
@@ -383,6 +424,8 @@ export function knurlTextures({ lite = false } = {}) {
     normalMap: finish(new THREE.CanvasTexture(normC), { srgb: false }),
   }
 }
+
+export const knurlTextures = (o) => runSync(knurlTexturesGen(o))
 
 /* ------------------------------------------------------------------ */
 /* Plate face print: weight, KG, FORGE, an arc of small type           */
@@ -421,7 +464,7 @@ function drawArc(ctx, text, cx, cy, radius, cap, startAngle, tracking = 60) {
  * kg: '25' | '20' | '5'; ink: print colour; outerR/innerR/arcR: label ring radii in metres (arcR: centre line of
  * the arc type). Returns a CanvasTexture with alpha.
  */
-export function plateLabel({ kg, ink = PAPER, outerR, innerR, arcR, lite = false }) {
+export function* plateLabelGen({ kg, ink = PAPER, outerR, innerR, arcR, lite = false }) {
   const S = lite ? 512 : 1024
   const c = makeCanvas(S, S)
   const ctx = c.getContext('2d')
@@ -475,6 +518,7 @@ export function plateLabel({ kg, ink = PAPER, outerR, innerR, arcR, lite = false
     })
   }
 
+  yield
   // small type running round the outer band (visible past the smaller plate in front)
   if (arcR) {
     const R = arcR * px
@@ -483,9 +527,64 @@ export function plateLabel({ kg, ink = PAPER, outerR, innerR, arcR, lite = false
     drawArc(ctx, words + words, half, half, R, cap, -Math.PI * 0.98, 70)
   }
 
+  yield
+  // the print is years old: worn thin at the rim where the plates are rolled and stacked, speckled where
+  // bumpers have hit the floor, a few hairline cracks and thin patches
+  const rnd = prng(500 + Number(kg))
+  ctx.save()
+  ctx.globalCompositeOperation = 'destination-out'
+  const k = S / 1024
+  const rim = ctx.createRadialGradient(half, half, half * 0.78, half, half, half)
+  rim.addColorStop(0, 'rgba(0,0,0,0)')
+  rim.addColorStop(1, 'rgba(0,0,0,0.38)')
+  ctx.fillStyle = rim
+  ctx.fillRect(0, 0, S, S)
+  for (let i = 0; i < 36; i++) {
+    const a = rnd() * Math.PI * 2
+    const rr = inner + (half - inner) * Math.sqrt(rnd())
+    const x = half + Math.cos(a) * rr
+    const y = half + Math.sin(a) * rr
+    const r = (8 + rnd() * 34) * k
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r)
+    g.addColorStop(0, `rgba(0,0,0,${0.12 + rnd() * 0.3})`)
+    g.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = g
+    ctx.fillRect(x - r, y - r, r * 2, r * 2)
+  }
+  yield
+  for (let i = 0; i < 7000 * k * k; i++) {
+    if ((i & 2047) === 0) yield
+    const a = rnd() * Math.PI * 2
+    const rr = inner + (half - inner) * Math.pow(rnd(), 0.6)
+    ctx.fillStyle = `rgba(0,0,0,${0.18 + rnd() * 0.5})`
+    const d = (0.7 + rnd() * rnd() * 2.2) * k
+    ctx.fillRect(half + Math.cos(a) * rr, half + Math.sin(a) * rr, d, d)
+  }
+  ctx.lineCap = 'round'
+  for (let i = 0; i < 26; i++) {
+    let x = half + (rnd() - 0.5) * S * 0.8
+    let y = half + (rnd() - 0.5) * S * 0.8
+    let a = rnd() * Math.PI * 2
+    ctx.strokeStyle = `rgba(0,0,0,${0.5 + rnd() * 0.4})`
+    ctx.lineWidth = (0.6 + rnd() * 0.8) * k
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    const n = 3 + Math.floor(rnd() * 5)
+    for (let j = 0; j < n; j++) {
+      a += (rnd() - 0.5) * 1.2
+      x += Math.cos(a) * (4 + rnd() * 9) * k
+      y += Math.sin(a) * (4 + rnd() * 9) * k
+      ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+  }
+  ctx.restore()
+
   const tex = new THREE.CanvasTexture(c)
   return finish(tex)
 }
+
+export const plateLabel = (o) => runSync(plateLabelGen(o))
 
 /* ------------------------------------------------------------------ */
 /* Painted concrete-block wall (tileable): 4 blocks × 8 courses per     */
@@ -495,7 +594,7 @@ export function plateLabel({ kg, ink = PAPER, outerR, innerR, arcR, lite = false
 /* the wall shader for the painted headline), G = roughness.           */
 /* ------------------------------------------------------------------ */
 export const BLOCK_TILE = 1.6 // m
-export function blockWallTextures({ lite = false } = {}) {
+export function* blockWallTexturesGen({ lite = false } = {}) {
   const S = lite ? 512 : 1024
   const bw = S / 4 // block module (400 mm)
   const bh = S / 8 // course (200 mm)
@@ -511,6 +610,7 @@ export function blockWallTextures({ lite = false } = {}) {
   const tone = new Float32Array(32 * 8)
   for (let i = 0; i < tone.length; i++) tone[i] = (rnd() - 0.5) * 0.06
   for (let y = 0; y < S; y++) {
+    if ((y & 15) === 0) yield
     const course = Math.floor(y / bh)
     const off = course % 2 ? bw / 2 : 0
     const by = y - course * bh
@@ -523,26 +623,27 @@ export function blockWallTextures({ lite = false } = {}) {
       let h
       let ao
       if (d < joint) {
-        // concave tooled joint, 5 mm deep
+        // concave tooled joint, a few mm deep under the paint
         const k = d / joint
-        h = -1 + 0.35 * k * k
-        ao = 0.5 + 0.2 * k
+        h = -0.75 + 0.3 * k * k
+        ao = 0.78 + 0.1 * k
       } else {
         const e = Math.min(1, (d - joint) / round)
-        h = -0.45 * (1 - e * e) + (face(u * 64, v * 64) - 0.5) * 0.08 + (face2(u * 256, v * 256) - 0.5) * 0.05
-        ao = 0.86 + 0.14 * e
+        h = -0.4 * (1 - e) * (1 - e) + (face(u * 64, v * 64) - 0.5) * 0.1 + (face2(u * 256, v * 256) - 0.5) * 0.06
+        ao = 0.9 + 0.1 * e
       }
       H[y * S + x] = h
       AO[y * S + x] = ao
     }
   }
   // pores and small pits in the block faces (paint bridges some, not all)
-  const pits = (lite ? 2600 : 9000) * (S / 1024) ** 2
+  const pits = (lite ? 1300 : 4200) * (S / 1024) ** 2
   for (let i = 0; i < pits; i++) {
+    if ((i & 255) === 0) yield
     const cx = rnd() * S
     const cy = rnd() * S
-    const r = 0.6 + rnd() * rnd() * 3.2 * (S / 1024)
-    const depth = 0.25 + rnd() * 0.5
+    const r = 0.6 + rnd() * rnd() * 2.4 * (S / 1024)
+    const depth = 0.15 + rnd() * 0.35
     for (let yy = Math.floor(cy - r); yy <= cy + r; yy++) {
       for (let xx = Math.floor(cx - r); xx <= cx + r; xx++) {
         const q = Math.hypot(xx - cx, yy - cy) / r
@@ -550,7 +651,7 @@ export function blockWallTextures({ lite = false } = {}) {
         const j = ((yy + S) % S) * S + ((xx + S) % S)
         const k = 1 - q * q
         H[j] -= depth * k
-        AO[j] *= 1 - 0.35 * k * depth
+        AO[j] *= 1 - 0.18 * k * depth
       }
     }
   }
@@ -561,9 +662,10 @@ export function blockWallTextures({ lite = false } = {}) {
   const ni = nrmC.getContext('2d').createImageData(S, S)
   const ri = rghC.getContext('2d').createImageData(S, S)
   // normal strength: 5 mm joint over `joint` px
-  const strength = (0.005 * pxm) / 1.0
+  const strength = 0.0024 * pxm
   const at = (x, y) => H[((y + S) % S) * S + ((x + S) % S)]
   for (let y = 0; y < S; y++) {
+    if ((y & 15) === 0) yield
     const course = Math.floor(y / bh)
     const off = course % 2 ? bw / 2 : 0
     for (let x = 0; x < S; x++) {
@@ -579,10 +681,10 @@ export function blockWallTextures({ lite = false } = {}) {
       // charcoal paint, each block a hair different, roller mottling, darker in the cavities
       const blk = Math.floor(((x + off) % S) / bw) + course * 4
       const m = (mott(x / 64, y / 64) - 0.5) * 0.07
-      const l = (1 + tone[blk % tone.length] + m) * (0.8 + 0.2 * AO[i])
-      mi.data[o] = Math.max(0, Math.min(255, 62 * l))
-      mi.data[o + 1] = Math.max(0, Math.min(255, 64 * l))
-      mi.data[o + 2] = Math.max(0, Math.min(255, 70 * l))
+      const l = (1 + tone[blk % tone.length] + m) * (0.88 + 0.12 * AO[i])
+      mi.data[o] = Math.max(0, Math.min(255, 47 * l))
+      mi.data[o + 1] = Math.max(0, Math.min(255, 49 * l))
+      mi.data[o + 2] = Math.max(0, Math.min(255, 54 * l))
       mi.data[o + 3] = 255
       ri.data[o] = Math.round(255 * AO[i])
       ri.data[o + 1] = Math.round(255 * (0.6 + (1 - AO[i]) * 0.5 + m))
@@ -600,15 +702,18 @@ export function blockWallTextures({ lite = false } = {}) {
   }
 }
 
+export const blockWallTextures = (o) => runSync(blockWallTexturesGen(o))
+
 /* ------------------------------------------------------------------ */
 /* Tileable fBm noise, four independent channels (haze density, chalk  */
 /* puffs, grime and scuffs on the wall and floor). Linear data.         */
 /* ------------------------------------------------------------------ */
-export function noiseTexture({ size = 256 } = {}) {
+export function* noiseTextureGen({ size = 256 } = {}) {
   // a DataTexture, not a canvas: canvas storage premultiplies alpha and would wreck the fourth channel
   const img = { data: new Uint8Array(size * size * 4) }
   const ch = [0, 1, 2, 3].map((k) => [4, 8, 16, 32].map((p, j) => valueNoise(301 + k * 10 + j, p)))
   for (let y = 0; y < size; y++) {
+    if ((y & 7) === 0) yield
     for (let x = 0; x < size; x++) {
       const u = x / size
       const v = y / size
@@ -640,12 +745,14 @@ export function noiseTexture({ size = 256 } = {}) {
   return t
 }
 
+export const noiseTexture = (o) => runSync(noiseTextureGen(o))
+
 /* ------------------------------------------------------------------ */
 /* Headline painted on the wall: "MOVE IT" flush left, "FAST." flush    */
 /* right under it. Returns { texture, aspect, layout } (layout: the     */
 /* shared metrics the framing solver uses, see frame.js).               */
 /* ------------------------------------------------------------------ */
-export function headlineTexture({ lines, lite = false }) {
+export function* headlineTextureGen({ lines, lite = false }) {
   const W = lite ? 1536 : 2304
   const layout = headlineLayout(lines, layoutText, CAP_HEIGHT, { W })
   const H = layout.H
@@ -653,6 +760,7 @@ export function headlineTexture({ lines, lite = false }) {
   const ctx = c.getContext('2d')
   const rnd = prng(77)
   for (const ln of layout.lines) {
+    yield
     for (const it of ln.items) {
       ctx.save()
       ctx.translate(it.px, ln.base)
@@ -667,8 +775,9 @@ export function headlineTexture({ lines, lite = false }) {
   ctx.globalCompositeOperation = 'destination-out'
   const area = (W * H) / 1e6
   // fine pores
-  for (let i = 0; i < 26000 * area; i++) {
-    ctx.fillStyle = `rgba(0,0,0,${0.06 + rnd() * 0.22})`
+  for (let i = 0; i < 12000 * area; i++) {
+    if ((i & 2047) === 0) yield
+    ctx.fillStyle = `rgba(0,0,0,${0.04 + rnd() * 0.14})`
     const s = 0.8 + rnd() * 1.6
     ctx.fillRect(rnd() * W, rnd() * H, s, s)
   }
@@ -677,6 +786,7 @@ export function headlineTexture({ lines, lite = false }) {
     ctx.fillStyle = `rgba(0,0,0,${0.03 + rnd() * 0.06})`
     ctx.fillRect(rnd() * W, rnd() * H, 40 + rnd() * 220, 1 + rnd() * 3)
   }
+  yield
   // a few small chips
   for (let i = 0; i < 22 * area; i++) {
     ctx.fillStyle = `rgba(0,0,0,${0.5 + rnd() * 0.4})`
@@ -695,13 +805,15 @@ export function headlineTexture({ lines, lite = false }) {
   return { texture, aspect: layout.aspect, layout }
 }
 
+export const headlineTexture = (o) => runSync(headlineTextureGen(o))
+
 /* ------------------------------------------------------------------ */
 /* Spot cookie: the lamp has barn doors. A long, soft-edged slot of     */
 /* light along the bar (both plate stacks lit) that stops short of the  */
 /* near edge of the platform, so the floor under the copy stays dark.   */
 /* u runs along world x, v along world z (shadow camera up = -z).       */
 /* ------------------------------------------------------------------ */
-export function spotCookie({ angle, height, halfX = 1.2, halfZ = 0.82, offZ = -0.12, size = 256 } = {}) {
+export function* spotCookieGen({ angle, height, halfX = 1.2, halfZ = 0.82, offZ = -0.12, size = 256 } = {}) {
   const c = makeCanvas(size, size)
   const ctx = c.getContext('2d')
   const img = ctx.createImageData(size, size)
@@ -709,6 +821,7 @@ export function spotCookie({ angle, height, halfX = 1.2, halfZ = 0.82, offZ = -0
   const rnd = prng(91)
   const n = valueNoise(92, 8)
   for (let y = 0; y < size; y++) {
+    if ((y & 15) === 0) yield
     for (let x = 0; x < size; x++) {
       const wx = ((x + 0.5) / size) * 2 - 1
       const wz = ((y + 0.5) / size) * 2 - 1
@@ -734,6 +847,8 @@ export function spotCookie({ angle, height, halfX = 1.2, halfZ = 0.82, offZ = -0
   t.needsUpdate = true
   return t
 }
+
+export const spotCookie = (o) => runSync(spotCookieGen(o))
 
 function smoothstep(a, b, x) {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
